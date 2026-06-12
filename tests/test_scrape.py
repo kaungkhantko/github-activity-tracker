@@ -7,7 +7,10 @@ from pathlib import Path
 
 from unittest.mock import patch, MagicMock
 
-from src.scrape import load_config, get_date_range, read_last_run, write_last_run, run_gh
+from src.scrape import (
+    load_config, get_date_range, read_last_run, write_last_run, run_gh,
+    fetch_prs, fetch_issues, fetch_comments, fetch_commits,
+)
 
 
 class TestConfig(unittest.TestCase):
@@ -97,3 +100,108 @@ class TestRunGh(unittest.TestCase):
         with patch("subprocess.run", return_value=mock_result):
             result = run_gh(["api", "repos/owner/repo/issues/comments"])
             self.assertEqual(result, [])
+
+
+class TestFetchPrs(unittest.TestCase):
+    def test_fetch_prs_filters_fields(self):
+        raw_prs = [
+            {
+                "number": 1,
+                "title": "PR One",
+                "state": "open",
+                "url": "https://github.com/owner/repo/pull/1",
+                "createdAt": "2026-06-12T10:00:00Z",
+                "closedAt": None,
+                "mergedAt": None,
+                "author": {"login": "owner"},
+                "labels": [{"name": "bug"}],
+                "body": "Description",
+                "extra_field": "should be removed"
+            }
+        ]
+        fields = ["number", "title", "state", "url", "created_at", "closed_at", "merged_at", "author", "labels", "body"]
+        result = fetch_prs(raw_prs, fields)
+        self.assertEqual(result, [
+            {
+                "number": 1,
+                "title": "PR One",
+                "state": "open",
+                "url": "https://github.com/owner/repo/pull/1",
+                "created_at": "2026-06-12T10:00:00Z",
+                "closed_at": None,
+                "merged_at": None,
+                "author": "owner",
+                "labels": ["bug"],
+                "body": "Description"
+            }
+        ])
+
+
+class TestFetchIssues(unittest.TestCase):
+    def test_fetch_issues_filters_fields(self):
+        raw = [
+            {
+                "number": 1,
+                "title": "Issue One",
+                "state": "closed",
+                "url": "https://github.com/owner/repo/issues/1",
+                "createdAt": "2026-06-12T10:00:00Z",
+                "closedAt": "2026-06-12T11:00:00Z",
+                "author": {"login": "owner"},
+                "labels": [{"name": "bug"}],
+                "body": "Bug description"
+            }
+        ]
+        fields = ["number", "title", "state", "url", "created_at", "closed_at", "author", "labels", "body"]
+        result = fetch_issues(raw, fields)
+        self.assertEqual(result[0]["author"], "owner")
+        self.assertEqual(result[0]["labels"], ["bug"])
+        self.assertEqual(result[0]["state"], "closed")
+
+
+class TestFetchComments(unittest.TestCase):
+    def test_fetch_comments_filters_fields(self):
+        raw = [
+            {
+                "issue": {"number": 1},
+                "pullRequest": None,
+                "body": "Comment",
+                "url": "https://github.com/owner/repo/issues/1#issuecomment-1",
+                "createdAt": "2026-06-12T10:00:00Z",
+                "author": {"login": "owner"}
+            }
+        ]
+        fields = ["type", "issue_number", "pr_number", "body", "url", "created_at", "author"]
+        result = fetch_comments(raw, fields)
+        self.assertEqual(result[0], {
+            "type": "issue_comment",
+            "issue_number": 1,
+            "pr_number": None,
+            "body": "Comment",
+            "url": "https://github.com/owner/repo/issues/1#issuecomment-1",
+            "created_at": "2026-06-12T10:00:00Z",
+            "author": "owner"
+        })
+
+
+class TestFetchCommits(unittest.TestCase):
+    def test_fetch_commits_filters_fields(self):
+        raw = [
+            {
+                "sha": "abc123",
+                "commit": {"message": "Fix bug", "committer": {"date": "2026-06-12T10:00:00Z"}},
+                "html_url": "https://github.com/owner/repo/commit/abc123",
+                "author": {"login": "owner"},
+                "files": [{"filename": "src/main.py"}]
+            }
+        ]
+        fields = ["sha", "message", "url", "date", "author", "files_changed"]
+        result = fetch_commits(raw, fields)
+        self.assertEqual(result[0], {
+            "sha": "abc123",
+            "message": "Fix bug",
+            "url": "https://github.com/owner/repo/commit/abc123",
+            "date": "2026-06-12T10:00:00Z",
+            "author": "owner",
+            "files_changed": ["src/main.py"]
+        })
