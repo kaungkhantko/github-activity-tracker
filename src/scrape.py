@@ -209,6 +209,17 @@ def _deep_get(root: JSON, keys: list[str], default: Any = None) -> Any:
     return current
 
 
+def _nested_group(entries: list[tuple[list[str], Any]]) -> JSON:
+    if not entries:
+        return {}
+    if len(entries[0][0]) == 1:
+        return {key: value for [key], value in entries}
+    groups: dict[str, list[tuple[list[str], Any]]] = defaultdict(list)
+    for keys, value in entries:
+        groups[keys[0]].append((keys[1:], value))
+    return {key: _nested_group(group_entries) for key, group_entries in groups.items()}
+
+
 def _deep_set(root: JSON, keys: list[str], value: Any) -> JSON:
     if not keys:
         return value
@@ -218,14 +229,16 @@ def _deep_set(root: JSON, keys: list[str], value: Any) -> JSON:
 
 
 def _merge_repo_data(existing: JSON, repo_data: JSON) -> JSON:
+    paths_and_items = [
+        (["repos", repo, "users", user, activity_type], new_items)
+        for repo, user_data in repo_data.items()
+        for user, activities in user_data.get("users", {}).items()
+        for activity_type, new_items in activities.items()
+    ]
     updated = existing
-    for repo, user_data in repo_data.items():
-        for user, activities in user_data.get("users", {}).items():
-            for activity_type, new_items in activities.items():
-                path = ["repos", repo, "users", user, activity_type]
-                current_items = _deep_get(updated, path, [])
-                merged = _merge_unique(current_items, new_items)
-                updated = _deep_set(updated, path, merged)
+    for path, new_items in paths_and_items:
+        current_items = _deep_get(updated, path, [])
+        updated = _deep_set(updated, path, _merge_unique(current_items, new_items))
     return updated
 
 
@@ -237,17 +250,14 @@ def write_daily_data(data_dir: Path, day: str, repo_data: JSON) -> None:
 
 
 def group_by_day(activity_by_repo: dict[str, JSON]) -> dict[str, JSON]:
-    groups: dict[tuple[str, str, str, str], list[JSON]] = defaultdict(list)
-    for repo, users_data in activity_by_repo.items():
-        for user, activities in users_data.items():
-            for activity_type, items in activities.items():
-                for day, day_items in split_by_day(items).items():
-                    groups[(day, repo, user, activity_type)].extend(day_items)
-
-    result: JSON = {}
-    for (day, repo, user, activity_type), items in groups.items():
-        result = _deep_set(result, [day, repo, "users", user, activity_type], items)
-    return result
+    entries = [
+        ([day, repo, "users", user, activity_type], day_items)
+        for repo, users_data in activity_by_repo.items()
+        for user, activities in users_data.items()
+        for activity_type, items in activities.items()
+        for day, day_items in split_by_day(items).items()
+    ]
+    return _nested_group(entries)
 
 
 def main() -> None:
