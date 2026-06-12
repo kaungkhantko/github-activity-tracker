@@ -230,3 +230,68 @@ def write_daily_data(data_dir: Path, day: str, repo_data: dict) -> None:
 
     day_path = data_dir / f"{day}.json"
     day_path.write_text(json.dumps(day_data, indent=2))
+
+
+def main() -> None:
+    import logging
+
+    config_path = Path(__file__).resolve().parent.parent / "config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"{config_path} not found. Copy example-config.json to config.json and edit it."
+        )
+    config = load_config(config_path)
+
+    data_dir = Path(config["data_dir"])
+    log_file = Path(config["log_file"])
+    state_dir = log_file.parent
+    last_run_path = state_dir / "last_run.txt"
+
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s: %(message)s",
+    )
+
+    last_run = read_last_run(last_run_path)
+    since, until = get_date_range(last_run, config["bootstrap_days"])
+
+    logging.info(f"Starting scrape from {since} to {until}")
+
+    all_activity = {}
+    for repo in config["repos"]:
+        logging.info(f"Fetching activity for {repo}")
+        all_activity[repo] = fetch_repo_activity(
+            repo,
+            config["users"],
+            config["activity_types"],
+            config["fields"],
+            since,
+            until,
+        )
+
+    # Split by day and write
+    repo_day_data = {}
+    for repo, users_data in all_activity.items():
+        for user, activities in users_data.items():
+            for activity_type, items in activities.items():
+                by_day = split_by_day(items)
+                for day, day_items in by_day.items():
+                    if day not in repo_day_data:
+                        repo_day_data[day] = {}
+                    if repo not in repo_day_data[day]:
+                        repo_day_data[day][repo] = {"users": {}}
+                    if user not in repo_day_data[day][repo]["users"]:
+                        repo_day_data[day][repo]["users"][user] = {}
+                    repo_day_data[day][repo]["users"][user][activity_type] = day_items
+
+    for day, repo_data in repo_day_data.items():
+        write_daily_data(data_dir, day, repo_data)
+
+    write_last_run(last_run_path, datetime.now(timezone.utc))
+    logging.info("Scrape complete")
+
+
+if __name__ == "__main__":
+    main()
