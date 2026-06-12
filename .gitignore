@@ -1,1 +1,25 @@
-docs/
+# Local docs and generated config/docs/docs/
+config.json
+
+# Local data and logs
+*.log
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# OS
+.DS_Store
+Thumbs.db

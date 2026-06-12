@@ -1,0 +1,19 @@
+{
+  "repos": [
+    "owner/repo-1",
+    "owner/repo-2",
+    "owner/repo-3"
+  ],
+  "users": ["kaungkhantko"],
+  "activity_types": ["prs", "issues", "comments", "commits"],
+  "fields": {
+    "prs": ["number", "title", "state", "url", "created_at", "closed_at", "merged_at", "author", "labels", "body"],
+    "issues": ["number", "title", "state", "url", "created_at", "closed_at", "author", "labels", "body"],
+    "comments": ["type", "issue_number", "pr_number", "body", "url", "created_at", "author"],
+    "commits": ["sha", "message", "url", "date", "author", "files_changed"]
+  },
+  "cron_schedule": "0 */3 * * *",
+  "data_dir": "~/.github-activity-tracker/data",
+  "log_file": "~/.github-activity-tracker/scrape.log",
+  "bootstrap_days": 7
+}
