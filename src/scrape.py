@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -30,3 +31,14 @@ def read_last_run(last_run_path: Path) -> datetime | None:
 def write_last_run(last_run_path: Path, timestamp: datetime) -> None:
     last_run_path.parent.mkdir(parents=True, exist_ok=True)
     last_run_path.write_text(timestamp.isoformat())
+
+
+def run_gh(args: list[str]) -> list[dict] | dict:
+    cmd = ["gh"] + args
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh command failed: {result.stderr}")
+    stdout = result.stdout.strip()
+    if not stdout:
+        return []
+    return json.loads(stdout)
