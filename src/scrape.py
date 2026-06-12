@@ -128,3 +128,54 @@ def _extract_commit(raw: dict, fields: list[str]) -> dict:
 
 def fetch_commits(raw_commits: list[dict], fields: list[str]) -> list[dict]:
     return [_extract_commit(c, fields) for c in raw_commits]
+
+
+def fetch_repo_activity(
+    repo: str,
+    users: list[str],
+    activity_types: list[str],
+    fields: dict[str, list[str]],
+    since: str,
+    until: str,
+) -> dict:
+    result = {user: {} for user in users}
+    date_query = f"{since[:10]}..{until[:10]}"
+
+    if "prs" in activity_types:
+        for user in users:
+            raw = run_gh([
+                "pr", "list", "--repo", repo, "--state", "all",
+                "--author", user,
+                "--search", f"created:{date_query}",
+                "--json", "number,title,state,url,createdAt,closedAt,mergedAt,author,labels,body",
+            ])
+            result[user]["prs"] = fetch_prs(raw, fields["prs"])
+
+    if "issues" in activity_types:
+        for user in users:
+            raw = run_gh([
+                "issue", "list", "--repo", repo, "--state", "all",
+                "--author", user,
+                "--search", f"created:{date_query}",
+                "--json", "number,title,state,url,createdAt,closedAt,author,labels,body",
+            ])
+            result[user]["issues"] = fetch_issues(raw, fields["issues"])
+
+    if "comments" in activity_types:
+        for user in users:
+            raw = run_gh([
+                "api", f"repos/{repo}/issues/comments",
+                "-X", "GET", "-f", f"since={since}", "--paginate",
+            ])
+            filtered = [c for c in raw if _extract_value(c.get("author")) == user]
+            result[user]["comments"] = fetch_comments(filtered, fields["comments"])
+
+    if "commits" in activity_types:
+        for user in users:
+            raw = run_gh([
+                "api", f"repos/{repo}/commits",
+                "-X", "GET", "-f", f"author={user}", "-f", f"since={since}", "-f", f"until={until}", "--paginate",
+            ])
+            result[user]["commits"] = fetch_commits(raw, fields["commits"])
+
+    return result
