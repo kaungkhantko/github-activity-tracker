@@ -14,6 +14,6 @@
   },
   "cron_schedule": "0 */3 * * *",
   "data_dir": "data",
-  "log_file": "scrape.log",
+  "log_file": "logs/scrape.log",
   "bootstrap_days": 7
 }

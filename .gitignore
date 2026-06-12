@@ -4,6 +4,7 @@ config.json
 # Local data and logs
 *.log
 data/
+logs/
 
 # Python
 __pycache__/
