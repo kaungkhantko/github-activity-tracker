@@ -13,7 +13,7 @@
     "commits": ["sha", "message", "url", "date", "author", "files_changed"]
   },
   "cron_schedule": "0 */3 * * *",
-  "data_dir": "~/.github-activity-tracker/data",
-  "log_file": "~/.github-activity-tracker/scrape.log",
+  "data_dir": "data",
+  "log_file": "scrape.log",
   "bootstrap_days": 7
 }
