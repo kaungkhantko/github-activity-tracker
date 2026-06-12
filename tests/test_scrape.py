@@ -10,6 +10,7 @@ from unittest.mock import patch, MagicMock
 from src.scrape import (
     load_config, get_date_range, read_last_run, write_last_run, run_gh,
     fetch_prs, fetch_issues, fetch_comments, fetch_commits,
+    split_by_day, write_daily_data,
 )
 
 
@@ -182,6 +183,86 @@ class TestFetchComments(unittest.TestCase):
             "created_at": "2026-06-12T10:00:00Z",
             "author": "owner"
         })
+
+
+class TestSplitByDay(unittest.TestCase):
+    def test_split_by_day_groups_items_by_day(self):
+        items = [
+            {"created_at": "2026-06-12T10:00:00Z"},
+            {"created_at": "2026-06-13T11:00:00Z"},
+            {"date": "2026-06-12T15:00:00Z"},
+        ]
+        result = split_by_day(items)
+        self.assertIn("2026-06-12", result)
+        self.assertIn("2026-06-13", result)
+        self.assertEqual(len(result["2026-06-12"]), 2)
+        self.assertEqual(len(result["2026-06-13"]), 1)
+
+
+class TestWriteDailyData(unittest.TestCase):
+    def test_write_daily_data_appends_to_existing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            day = "2026-06-12"
+            existing = {
+                "date": day,
+                "repos": {}
+            }
+            (data_dir / f"{day}.json").write_text(json.dumps(existing))
+
+            new_data = {
+                "owner/repo-1": {
+                    "users": {
+                        "kaungkhantko": {
+                            "prs": [{"number": 1, "title": "PR One"}]
+                        }
+                    }
+                }
+            }
+
+            write_daily_data(data_dir, day, new_data)
+
+            updated = json.loads((data_dir / f"{day}.json").read_text())
+            self.assertEqual(
+                updated["repos"]["owner/repo-1"]["users"]["kaungkhantko"]["prs"],
+                [{"number": 1, "title": "PR One"}]
+            )
+
+    def test_write_daily_data_deduplicates(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            day = "2026-06-12"
+            existing = {
+                "date": day,
+                "repos": {
+                    "owner/repo-1": {
+                        "users": {
+                            "kaungkhantko": {
+                                "prs": [{"number": 1, "title": "PR One"}]
+                            }
+                        }
+                    }
+                }
+            }
+            (data_dir / f"{day}.json").write_text(json.dumps(existing))
+
+            new_data = {
+                "owner/repo-1": {
+                    "users": {
+                        "kaungkhantko": {
+                            "prs": [{"number": 1, "title": "PR One Duplicate"}]
+                        }
+                    }
+                }
+            }
+
+            write_daily_data(data_dir, day, new_data)
+
+            updated = json.loads((data_dir / f"{day}.json").read_text())
+            self.assertEqual(
+                len(updated["repos"]["owner/repo-1"]["users"]["kaungkhantko"]["prs"]),
+                1
+            )
 
 
 class TestFetchCommits(unittest.TestCase):

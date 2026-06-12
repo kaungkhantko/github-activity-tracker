@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -179,3 +180,53 @@ def fetch_repo_activity(
             result[user]["commits"] = fetch_commits(raw, fields["commits"])
 
     return result
+
+
+def split_by_day(items: list[dict]) -> dict[str, list[dict]]:
+    by_day = defaultdict(list)
+    for item in items:
+        date_key = item.get("created_at") or item.get("date")
+        if date_key:
+            day = date_key[:10]
+            by_day[day].append(item)
+    return dict(by_day)
+
+
+def _load_day_file(data_dir: Path, day: str) -> dict:
+    day_path = data_dir / f"{day}.json"
+    if day_path.exists():
+        return json.loads(day_path.read_text())
+    return {"date": day, "repos": {}}
+
+
+def _item_id(item: dict) -> str:
+    for key in ["number", "sha", "url"]:
+        if key in item:
+            return str(item[key])
+    return str(item)
+
+
+def write_daily_data(data_dir: Path, day: str, repo_data: dict) -> None:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    day_data = _load_day_file(data_dir, day)
+
+    for repo, repo_payload in repo_data.items():
+        if repo not in day_data["repos"]:
+            day_data["repos"][repo] = {"users": {}}
+
+        for user, activities in repo_payload.get("users", {}).items():
+            if user not in day_data["repos"][repo]["users"]:
+                day_data["repos"][repo]["users"][user] = {}
+
+            for activity_type, items in activities.items():
+                existing = day_data["repos"][repo]["users"][user].get(activity_type, [])
+                existing_ids = {_item_id(i) for i in existing}
+                for item in items:
+                    item_id = _item_id(item)
+                    if item_id not in existing_ids:
+                        existing.append(item)
+                        existing_ids.add(item_id)
+                day_data["repos"][repo]["users"][user][activity_type] = existing
+
+    day_path = data_dir / f"{day}.json"
+    day_path.write_text(json.dumps(day_data, indent=2))
