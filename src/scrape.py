@@ -237,17 +237,17 @@ def write_daily_data(data_dir: Path, day: str, repo_data: JSON) -> None:
 
 
 def group_by_day(activity_by_repo: dict[str, JSON]) -> dict[str, JSON]:
-    grouped: JSON = {}
+    groups: dict[tuple[str, str, str, str], list[JSON]] = defaultdict(list)
     for repo, users_data in activity_by_repo.items():
         for user, activities in users_data.items():
             for activity_type, items in activities.items():
                 for day, day_items in split_by_day(items).items():
-                    grouped = _deep_set(
-                        grouped,
-                        [day, repo, "users", user, activity_type],
-                        day_items,
-                    )
-    return grouped
+                    groups[(day, repo, user, activity_type)].extend(day_items)
+
+    result: JSON = {}
+    for (day, repo, user, activity_type), items in groups.items():
+        result = _deep_set(result, [day, repo, "users", user, activity_type], items)
+    return result
 
 
 def main() -> None:
