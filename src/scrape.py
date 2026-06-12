@@ -7,9 +7,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+JSON = dict[str, Any]
 
-def load_config(config_path: Path) -> dict:
-    config = json.loads(config_path.read_text())
+
+def load_config(config_path: Path) -> JSON:
+    config: JSON = json.loads(config_path.read_text())
     config["data_dir"] = os.path.expanduser(config["data_dir"])
     config["log_file"] = os.path.expanduser(config["log_file"])
     return config
@@ -32,7 +34,7 @@ def write_last_run(last_run_path: Path, timestamp: datetime) -> None:
     last_run_path.write_text(timestamp.isoformat())
 
 
-def run_gh(args: list[str]) -> list[dict] | dict:
+def run_gh(args: list[str]) -> list[JSON] | JSON:
     result = subprocess.run(["gh", *args], capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"gh command failed: {result.stderr}")
@@ -44,7 +46,7 @@ def _to_snake_case(key: str) -> str:
     return key.replace("createdAt", "created_at").replace("closedAt", "closed_at").replace("mergedAt", "merged_at")
 
 
-def _unwrap_value(value: Any):
+def _unwrap_value(value: Any) -> Any:
     if isinstance(value, dict):
         if "login" in value:
             return value["login"]
@@ -55,7 +57,7 @@ def _unwrap_value(value: Any):
     return value
 
 
-def _filter_fields(item: dict, fields: list[str]) -> dict:
+def _filter_fields(item: JSON, fields: list[str]) -> JSON:
     return {
         _to_snake_case(key): _unwrap_value(value)
         for key, value in item.items()
@@ -63,22 +65,22 @@ def _filter_fields(item: dict, fields: list[str]) -> dict:
     }
 
 
-def fetch_prs(items: list[dict], fields: list[str]) -> list[dict]:
+def fetch_prs(items: list[JSON], fields: list[str]) -> list[JSON]:
     return [_filter_fields(item, fields) for item in items]
 
 
-def fetch_issues(items: list[dict], fields: list[str]) -> list[dict]:
+def fetch_issues(items: list[JSON], fields: list[str]) -> list[JSON]:
     return [_filter_fields(item, fields) for item in items]
 
 
-def _comment_type(comment: dict) -> str:
+def _comment_type(comment: JSON) -> str:
     return "pr_comment" if comment.get("pullRequest") else "issue_comment"
 
 
-def _extract_comment(comment: dict, fields: list[str]) -> dict:
+def _extract_comment(comment: JSON, fields: list[str]) -> JSON:
     issue = comment.get("issue") or {}
     pr = comment.get("pullRequest") or {}
-    mapping = {
+    mapping: JSON = {
         "type": _comment_type(comment),
         "issue_number": issue.get("number"),
         "pr_number": pr.get("number"),
@@ -90,13 +92,13 @@ def _extract_comment(comment: dict, fields: list[str]) -> dict:
     return {field: mapping[field] for field in fields if field in mapping}
 
 
-def fetch_comments(items: list[dict], fields: list[str]) -> list[dict]:
+def fetch_comments(items: list[JSON], fields: list[str]) -> list[JSON]:
     return [_extract_comment(comment, fields) for comment in items]
 
 
-def _extract_commit(commit: dict, fields: list[str]) -> dict:
+def _extract_commit(commit: JSON, fields: list[str]) -> JSON:
     commit_block = commit.get("commit", {})
-    mapping = {
+    mapping: JSON = {
         "sha": commit.get("sha"),
         "message": commit_block.get("message"),
         "url": commit.get("html_url"),
@@ -107,7 +109,7 @@ def _extract_commit(commit: dict, fields: list[str]) -> dict:
     return {field: mapping[field] for field in fields if field in mapping}
 
 
-def fetch_commits(items: list[dict], fields: list[str]) -> list[dict]:
+def fetch_commits(items: list[JSON], fields: list[str]) -> list[JSON]:
     return [_extract_commit(commit, fields) for commit in items]
 
 
@@ -118,8 +120,8 @@ def fetch_repo_activity(
     fields: dict[str, list[str]],
     since: str,
     until: str,
-) -> dict:
-    activity_by_user = {user: {} for user in users}
+) -> dict[str, JSON]:
+    activity_by_user: dict[str, JSON] = {user: {} for user in users}
     date_query = f"{since[:10]}..{until[:10]}"
 
     if "prs" in activity_types:
@@ -164,8 +166,8 @@ def fetch_repo_activity(
     return activity_by_user
 
 
-def split_by_day(items: list[dict]) -> dict[str, list[dict]]:
-    by_day = defaultdict(list)
+def split_by_day(items: list[JSON]) -> dict[str, list[JSON]]:
+    by_day: dict[str, list[JSON]] = defaultdict(list)
     for item in items:
         timestamp = item.get("created_at") or item.get("date")
         if timestamp:
@@ -173,58 +175,78 @@ def split_by_day(items: list[dict]) -> dict[str, list[dict]]:
     return dict(by_day)
 
 
-def _load_day_file(data_dir: Path, day: str) -> dict:
+def _load_day_file(data_dir: Path, day: str) -> JSON:
     day_path = data_dir / f"{day}.json"
     if day_path.exists():
         return json.loads(day_path.read_text())
     return {"date": day, "repos": {}}
 
 
-def _item_id(item: dict) -> str:
+def _item_id(item: JSON) -> str:
     for key in ("number", "sha", "url"):
         if key in item:
             return str(item[key])
     return str(item)
 
 
-def _ensure_path(nested: dict, keys: list[str]) -> dict:
+def _merge_unique(existing: list[JSON], new: list[JSON]) -> list[JSON]:
+    seen = {_item_id(i) for i in existing}
+    merged = list(existing)
+    for item in new:
+        item_id = _item_id(item)
+        if item_id not in seen:
+            merged.append(item)
+            seen.add(item_id)
+    return merged
+
+
+def _deep_get(root: JSON, keys: list[str], default: Any = None) -> Any:
+    current: Any = root
     for key in keys:
-        if key not in nested:
-            nested[key] = {}
-        nested = nested[key]
-    return nested
+        if not isinstance(current, dict) or key not in current:
+            return default
+        current = current[key]
+    return current
 
 
-def write_daily_data(data_dir: Path, day: str, repo_data: dict) -> None:
+def _deep_set(root: JSON, keys: list[str], value: Any) -> JSON:
+    if not keys:
+        return value
+    key = keys[0]
+    child = root.get(key, {})
+    return {**root, key: _deep_set(child, keys[1:], value)}
+
+
+def _merge_repo_data(existing: JSON, repo_data: JSON) -> JSON:
+    updated = existing
+    for repo, user_data in repo_data.items():
+        for user, activities in user_data.get("users", {}).items():
+            for activity_type, new_items in activities.items():
+                path = ["repos", repo, "users", user, activity_type]
+                current_items = _deep_get(updated, path, [])
+                merged = _merge_unique(current_items, new_items)
+                updated = _deep_set(updated, path, merged)
+    return updated
+
+
+def write_daily_data(data_dir: Path, day: str, repo_data: JSON) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     day_data = _load_day_file(data_dir, day)
-
-    for repo, user_data in repo_data.items():
-        repo_node = _ensure_path(day_data, ["repos", repo])
-        for user, activities in user_data.get("users", {}).items():
-            user_node = _ensure_path(repo_node, ["users", user])
-            for activity_type, items in activities.items():
-                existing = user_node.get(activity_type, [])
-                seen = {_item_id(i) for i in existing}
-                for item in items:
-                    item_id = _item_id(item)
-                    if item_id not in seen:
-                        existing.append(item)
-                        seen.add(item_id)
-                user_node[activity_type] = existing
-
-    (data_dir / f"{day}.json").write_text(json.dumps(day_data, indent=2))
+    updated = _merge_repo_data(day_data, repo_data)
+    (data_dir / f"{day}.json").write_text(json.dumps(updated, indent=2))
 
 
-def group_by_day(activity_by_repo: dict) -> dict:
-    grouped = {}
+def group_by_day(activity_by_repo: dict[str, JSON]) -> dict[str, JSON]:
+    grouped: JSON = {}
     for repo, users_data in activity_by_repo.items():
         for user, activities in users_data.items():
             for activity_type, items in activities.items():
                 for day, day_items in split_by_day(items).items():
-                    repo_node = _ensure_path(grouped, [day, repo])
-                    user_node = _ensure_path(repo_node, ["users", user])
-                    user_node[activity_type] = day_items
+                    grouped = _deep_set(
+                        grouped,
+                        [day, repo, "users", user, activity_type],
+                        day_items,
+                    )
     return grouped
 
 
@@ -252,7 +274,7 @@ def main() -> None:
 
     logging.info(f"Starting scrape from {since} to {until}")
 
-    activity_by_repo = {}
+    activity_by_repo: dict[str, JSON] = {}
     for repo in config["repos"]:
         logging.info(f"Fetching activity for {repo}")
         activity_by_repo[repo] = fetch_repo_activity(
