@@ -113,60 +113,73 @@ def fetch_commits(items: list[JSON], fields: list[str]) -> list[JSON]:
     return [_extract_commit(commit, fields) for commit in items]
 
 
+def _to_camel_case(key: str) -> str:
+    return key.replace("created_at", "createdAt").replace("closed_at", "closedAt").replace("merged_at", "mergedAt")
+
+
 def _date_query(since: str, until: str) -> str:
     return f"{since[:10]}..{until[:10]}"
 
 
-def _fetch_prs(repo: str, users: list[str], fields: list[str], since: str, until: str) -> dict[str, JSON]:
-    date_query = _date_query(since, until)
+def _list_command(gh_command: str, repo: str, user: str, since: str, until: str, fields: list[str]) -> list[str]:
+    gh_fields = ",".join(_to_camel_case(f) for f in fields)
+    return [
+        gh_command, "list", "--repo", repo, "--state", "all",
+        "--author", user,
+        "--search", f"created:{_date_query(since, until)}",
+        "--json", gh_fields,
+    ]
+
+
+def _comment_command(repo: str, since: str) -> list[str]:
+    return ["api", f"repos/{repo}/issues/comments", "-X", "GET", "-f", f"since={since}", "--paginate"]
+
+
+def _commit_command(repo: str, user: str, since: str, until: str) -> list[str]:
+    return [
+        "api", f"repos/{repo}/commits",
+        "-X", "GET", "-f", f"author={user}",
+        "-f", f"since={since}", "-f", f"until={until}",
+        "--paginate",
+    ]
+
+
+ACTIVITY_STRATEGIES: dict[str, dict[str, Any]] = {
+    "prs": {
+        "command": lambda repo, user, since, until, fields: _list_command("pr", repo, user, since, until, fields),
+        "extractor": fetch_prs,
+    },
+    "issues": {
+        "command": lambda repo, user, since, until, fields: _list_command("issue", repo, user, since, until, fields),
+        "extractor": fetch_issues,
+    },
+    "comments": {
+        "command": lambda repo, user, since, until, fields: _comment_command(repo, since),
+        "extractor": fetch_comments,
+        "author_getter": lambda item: _unwrap_value(item.get("author")),
+    },
+    "commits": {
+        "command": lambda repo, user, since, until, fields: _commit_command(repo, user, since, until),
+        "extractor": fetch_commits,
+    },
+}
+
+
+def _fetch_activity_type(
+    activity_type: str,
+    repo: str,
+    users: list[str],
+    fields: list[str],
+    since: str,
+    until: str,
+) -> dict[str, JSON]:
+    strategy = ACTIVITY_STRATEGIES[activity_type]
     result: dict[str, JSON] = {}
     for user in users:
-        response = run_gh([
-            "pr", "list", "--repo", repo, "--state", "all",
-            "--author", user,
-            "--search", f"created:{date_query}",
-            "--json", "number,title,state,url,createdAt,closedAt,mergedAt,author,labels,body",
-        ])
-        result[user] = {"prs": fetch_prs(response, fields)}
-    return result
-
-
-def _fetch_issues(repo: str, users: list[str], fields: list[str], since: str, until: str) -> dict[str, JSON]:
-    date_query = _date_query(since, until)
-    result: dict[str, JSON] = {}
-    for user in users:
-        response = run_gh([
-            "issue", "list", "--repo", repo, "--state", "all",
-            "--author", user,
-            "--search", f"created:{date_query}",
-            "--json", "number,title,state,url,createdAt,closedAt,author,labels,body",
-        ])
-        result[user] = {"issues": fetch_issues(response, fields)}
-    return result
-
-
-def _fetch_comments(repo: str, users: list[str], fields: list[str], since: str) -> dict[str, JSON]:
-    response = run_gh([
-        "api", f"repos/{repo}/issues/comments",
-        "-X", "GET", "-f", f"since={since}", "--paginate",
-    ])
-    result: dict[str, JSON] = {}
-    for user in users:
-        user_comments = [c for c in response if _unwrap_value(c.get("author")) == user]
-        result[user] = {"comments": fetch_comments(user_comments, fields)}
-    return result
-
-
-def _fetch_commits(repo: str, users: list[str], fields: list[str], since: str, until: str) -> dict[str, JSON]:
-    result: dict[str, JSON] = {}
-    for user in users:
-        response = run_gh([
-            "api", f"repos/{repo}/commits",
-            "-X", "GET", "-f", f"author={user}",
-            "-f", f"since={since}", "-f", f"until={until}",
-            "--paginate",
-        ])
-        result[user] = {"commits": fetch_commits(response, fields)}
+        response = run_gh(strategy["command"](repo, user, since, until, fields))
+        if "author_getter" in strategy:
+            response = [item for item in response if strategy["author_getter"](item) == user]
+        result[user] = {activity_type: strategy["extractor"](response, fields)}
     return result
 
 
@@ -187,18 +200,9 @@ def fetch_repo_activity(
 ) -> dict[str, JSON]:
     """Fetch activity from GitHub. This function is impure — it calls `run_gh`."""
     activity_by_user: dict[str, JSON] = {user: {} for user in users}
-
-    fetchers: dict[str, Callable[[], dict[str, JSON]]] = {
-        "prs": lambda: _fetch_prs(repo, users, fields["prs"], since, until),
-        "issues": lambda: _fetch_issues(repo, users, fields["issues"], since, until),
-        "comments": lambda: _fetch_comments(repo, users, fields["comments"], since),
-        "commits": lambda: _fetch_commits(repo, users, fields["commits"], since, until),
-    }
-
     for activity_type in activity_types:
-        if activity_type in fetchers:
-            activity_by_user = _merge_user_activity(activity_by_user, fetchers[activity_type]())
-
+        fetched = _fetch_activity_type(activity_type, repo, users, fields[activity_type], since, until)
+        activity_by_user = _merge_user_activity(activity_by_user, fetched)
     return activity_by_user
 
 
