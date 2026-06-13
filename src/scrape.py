@@ -65,52 +65,48 @@ def _filter_fields(item: JSON, fields: list[str]) -> JSON:
     }
 
 
-def fetch_prs(items: list[JSON], fields: list[str]) -> list[JSON]:
-    return [_filter_fields(item, fields) for item in items]
+def make_field_extractor(mapping_builder: Callable[[JSON], JSON]) -> Callable[[JSON, list[str]], JSON]:
+    def extract(item: JSON, fields: list[str]) -> JSON:
+        mapping = mapping_builder(item)
+        return {field: mapping[field] for field in fields if field in mapping}
+    return extract
 
 
-def fetch_issues(items: list[JSON], fields: list[str]) -> list[JSON]:
-    return [_filter_fields(item, fields) for item in items]
+def make_fetcher(extractor: Callable[[JSON, list[str]], JSON]) -> Callable[[list[JSON], list[str]], list[JSON]]:
+    def fetch(items: list[JSON], fields: list[str]) -> list[JSON]:
+        return [extractor(item, fields) for item in items]
+    return fetch
 
 
 def _comment_type(comment: JSON) -> str:
     return "pr_comment" if comment.get("pullRequest") else "issue_comment"
 
 
-def _extract_comment(comment: JSON, fields: list[str]) -> JSON:
-    issue = comment.get("issue") or {}
-    pr = comment.get("pullRequest") or {}
-    mapping: JSON = {
-        "type": _comment_type(comment),
-        "issue_number": issue.get("number"),
-        "pr_number": pr.get("number"),
-        "body": comment.get("body"),
-        "url": comment.get("url"),
-        "created_at": comment.get("createdAt"),
-        "author": _unwrap_value(comment.get("author")),
-    }
-    return {field: mapping[field] for field in fields if field in mapping}
+_extract_comment = make_field_extractor(lambda comment: {
+    "type": _comment_type(comment),
+    "issue_number": (comment.get("issue") or {}).get("number"),
+    "pr_number": (comment.get("pullRequest") or {}).get("number"),
+    "body": comment.get("body"),
+    "url": comment.get("url"),
+    "created_at": comment.get("createdAt"),
+    "author": _unwrap_value(comment.get("author")),
+})
 
 
-def fetch_comments(items: list[JSON], fields: list[str]) -> list[JSON]:
-    return [_extract_comment(comment, fields) for comment in items]
+_extract_commit = make_field_extractor(lambda commit: {
+    "sha": commit.get("sha"),
+    "message": commit.get("commit", {}).get("message"),
+    "url": commit.get("html_url"),
+    "date": commit.get("commit", {}).get("committer", {}).get("date"),
+    "author": _unwrap_value(commit.get("author")),
+    "files_changed": [f["filename"] for f in commit.get("files", [])],
+})
 
 
-def _extract_commit(commit: JSON, fields: list[str]) -> JSON:
-    commit_block = commit.get("commit", {})
-    mapping: JSON = {
-        "sha": commit.get("sha"),
-        "message": commit_block.get("message"),
-        "url": commit.get("html_url"),
-        "date": commit_block.get("committer", {}).get("date"),
-        "author": _unwrap_value(commit.get("author")),
-        "files_changed": [f["filename"] for f in commit.get("files", [])],
-    }
-    return {field: mapping[field] for field in fields if field in mapping}
-
-
-def fetch_commits(items: list[JSON], fields: list[str]) -> list[JSON]:
-    return [_extract_commit(commit, fields) for commit in items]
+fetch_prs = make_fetcher(_filter_fields)
+fetch_issues = make_fetcher(_filter_fields)
+fetch_comments = make_fetcher(_extract_comment)
+fetch_commits = make_fetcher(_extract_commit)
 
 
 def _to_camel_case(key: str) -> str:
@@ -183,13 +179,6 @@ def _fetch_activity_type(
     return result
 
 
-def _merge_user_activity(dest: dict[str, JSON], src: dict[str, JSON]) -> dict[str, JSON]:
-    result = {user: dict(activities) for user, activities in dest.items()}
-    for user, activities in src.items():
-        result[user] = {**result.get(user, {}), **activities}
-    return result
-
-
 def fetch_repo_activity(
     repo: str,
     users: list[str],
@@ -202,7 +191,7 @@ def fetch_repo_activity(
     activity_by_user: dict[str, JSON] = {user: {} for user in users}
     for activity_type in activity_types:
         fetched = _fetch_activity_type(activity_type, repo, users, fields[activity_type], since, until)
-        activity_by_user = _merge_user_activity(activity_by_user, fetched)
+        activity_by_user = deep_merge_with(activity_by_user, fetched, _take_right)
     return activity_by_user
 
 
@@ -229,24 +218,36 @@ def _item_id(item: JSON) -> str:
     return str(item)
 
 
-def _merge_unique(existing: list[JSON], new: list[JSON]) -> list[JSON]:
-    seen = {_item_id(i) for i in existing}
-    merged = list(existing)
-    for item in new:
-        item_id = _item_id(item)
-        if item_id not in seen:
-            merged.append(item)
-            seen.add(item_id)
-    return merged
+def make_unique_merger(id_fn: Callable[[JSON], str]) -> Callable[[list[JSON], list[JSON]], list[JSON]]:
+    def merge_unique(left: list[JSON], right: list[JSON]) -> list[JSON]:
+        seen = {id_fn(i) for i in left}
+        merged = list(left)
+        for item in right:
+            item_id = id_fn(item)
+            if item_id not in seen:
+                merged.append(item)
+                seen.add(item_id)
+        return merged
+    return merge_unique
 
 
-def _deep_get(root: JSON, keys: list[str], default: Any = None) -> Any:
-    current: Any = root
-    for key in keys:
-        if not isinstance(current, dict) or key not in current:
-            return default
-        current = current[key]
-    return current
+def _take_right(_left: Any, right: Any) -> Any:
+    return right
+
+
+def deep_merge_with(left: Any, right: Any, leaf_merger: Callable[[Any, Any], Any]) -> Any:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return leaf_merger(left, right)
+    result = dict(left)
+    for key, right_value in right.items():
+        if key in result:
+            result[key] = deep_merge_with(result[key], right_value, leaf_merger)
+        else:
+            result[key] = right_value
+    return result
+
+
+_merge_items = make_unique_merger(_item_id)
 
 
 def _nested_group(entries: list[tuple[list[str], Any]]) -> JSON:
@@ -260,32 +261,10 @@ def _nested_group(entries: list[tuple[list[str], Any]]) -> JSON:
     return {key: _nested_group(group_entries) for key, group_entries in groups.items()}
 
 
-def _deep_set(root: JSON, keys: list[str], value: Any) -> JSON:
-    if not keys:
-        return value
-    key = keys[0]
-    child = root.get(key, {})
-    return {**root, key: _deep_set(child, keys[1:], value)}
-
-
-def _merge_repo_data(existing: JSON, repo_data: JSON) -> JSON:
-    paths_and_items = [
-        (["repos", repo, "users", user, activity_type], new_items)
-        for repo, user_data in repo_data.items()
-        for user, activities in user_data.get("users", {}).items()
-        for activity_type, new_items in activities.items()
-    ]
-    updated = existing
-    for path, new_items in paths_and_items:
-        current_items = _deep_get(updated, path, [])
-        updated = _deep_set(updated, path, _merge_unique(current_items, new_items))
-    return updated
-
-
 def write_daily_data(data_dir: Path, day: str, repo_data: JSON) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     day_data = _load_day_file(data_dir, day)
-    updated = _merge_repo_data(day_data, repo_data)
+    updated = deep_merge_with(day_data, {"repos": repo_data}, _merge_items)
     (data_dir / f"{day}.json").write_text(json.dumps(updated, indent=2))
 
 
