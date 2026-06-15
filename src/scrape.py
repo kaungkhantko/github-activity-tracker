@@ -12,9 +12,11 @@ Record = dict[str, Any]
 
 def load_config(config_path: Path) -> Record:
     config: Record = json.loads(config_path.read_text())
-    config["data_dir"] = os.path.expanduser(config["data_dir"])
-    config["log_file"] = os.path.expanduser(config["log_file"])
-    return config
+    return {
+        **config,
+        "data_dir": os.path.expanduser(config["data_dir"]),
+        "log_file": os.path.expanduser(config["log_file"]),
+    }
 
 
 def get_date_range(last_run: datetime | None, bootstrap_days: int) -> tuple[str, str]:

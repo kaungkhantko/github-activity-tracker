@@ -35,6 +35,27 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(result["data_dir"], os.path.expanduser("~/test-data"))
             self.assertEqual(result["log_file"], os.path.expanduser("~/test.log"))
 
+    def test_load_config_does_not_mutate_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            config = {
+                "repos": ["owner/repo"],
+                "users": ["owner"],
+                "activity_types": ["prs"],
+                "fields": {"prs": ["number"]},
+                "cron_schedule": "0 * * * *",
+                "data_dir": "~/test-data",
+                "log_file": "~/test.log",
+                "bootstrap_days": 1,
+            }
+            config_path.write_text(json.dumps(config))
+            original = json.loads(config_path.read_text())
+
+            load_config(config_path)
+
+            after = json.loads(config_path.read_text())
+            self.assertEqual(after, original)
+
 
 class TestDateRange(unittest.TestCase):
     def test_get_date_range_with_last_run(self) -> None:
