@@ -134,6 +134,26 @@ fetch_comments = make_fetcher(_extract_comment)
 fetch_commits = make_fetcher(_extract_commit)
 
 
+def fetch_events(
+    raw_events: list[Record],
+    fields: list[str],
+    since: str,
+    until: str,
+    pr_numbers: set[int],
+    user: str,
+) -> list[Record]:
+    result = []
+    for event in raw_events:
+        actor = _extract_scalar(event.get("actor"))
+        if actor != user:
+            continue
+        created_at = event.get("created_at", "")
+        if not (since <= created_at <= until):
+            continue
+        result.append(_extract_event(event, fields, pr_numbers))
+    return result
+
+
 def _to_camel_case(key: str) -> str:
     return key.replace("created_at", "createdAt").replace("closed_at", "closedAt").replace("merged_at", "mergedAt")
 

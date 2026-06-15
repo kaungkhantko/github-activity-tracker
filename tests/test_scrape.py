@@ -410,3 +410,50 @@ class TestItemId(unittest.TestCase):
 
         item = {"url": "https://example.com/foo"}
         self.assertEqual(_item_id(item), "https://example.com/foo")
+
+
+class TestFetchEvents(unittest.TestCase):
+    def test_fetch_events_filters_by_actor_and_window(self):
+        from src.scrape import fetch_events
+        from datetime import datetime, timezone
+
+        raw_events = [
+            {
+                "id": "1",
+                "event": "renamed",
+                "created_at": "2026-06-14T10:00:00Z",
+                "actor": {"login": "kaungkhantko"},
+                "issue": {"number": 42},
+                "url": "https://api.github.com/.../events/1",
+                "changes": {"title": {"from": "old"}},
+            },
+            {
+                "id": "2",
+                "event": "labeled",
+                "created_at": "2026-06-14T11:00:00Z",
+                "actor": {"login": "otheruser"},
+                "issue": {"number": 42},
+                "url": "https://api.github.com/.../events/2",
+                "label": {"name": "bug"},
+            },
+            {
+                "id": "3",
+                "event": "closed",
+                "created_at": "2026-06-10T11:00:00Z",
+                "actor": {"login": "kaungkhantko"},
+                "issue": {"number": 42},
+                "url": "https://api.github.com/.../events/3",
+            },
+        ]
+        fields = ["id", "event", "created_at", "actor", "issue_number", "pr_number", "source", "details"]
+        since = "2026-06-14T00:00:00Z"
+        until = "2026-06-14T23:59:59Z"
+        pr_numbers = {42}
+        user = "kaungkhantko"
+
+        result = fetch_events(raw_events, fields, since, until, pr_numbers, user)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["id"], "1")
+        self.assertEqual(result[0]["event"], "renamed")
+        self.assertEqual(result[0]["actor"], "kaungkhantko")
