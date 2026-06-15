@@ -352,7 +352,7 @@ class TestExtractEvent(unittest.TestCase):
         fields = ["id", "event", "created_at", "actor", "issue_number", "pr_number", "source", "details"]
         pr_numbers = {42}
 
-        result = _extract_event(raw_event, fields, pr_numbers)
+        result = _extract_event(raw_event, fields, pr_numbers, issue_number=42)
 
         self.assertEqual(result, {
             "id": "12345",
@@ -380,7 +380,7 @@ class TestExtractEvent(unittest.TestCase):
         fields = ["id", "event", "created_at", "actor", "issue_number", "pr_number", "source", "details"]
         pr_numbers = set()
 
-        result = _extract_event(raw_event, fields, pr_numbers)
+        result = _extract_event(raw_event, fields, pr_numbers, issue_number=7)
 
         self.assertEqual(result, {
             "id": "67890",
@@ -408,7 +408,7 @@ class TestExtractEvent(unittest.TestCase):
         fields = ["id", "event", "created_at", "actor", "issue_number", "pr_number", "source", "details"]
         pr_numbers = set()
 
-        result = _extract_event(raw_event, fields, pr_numbers)
+        result = _extract_event(raw_event, fields, pr_numbers, issue_number=5)
 
         self.assertEqual(result["event"], "labeled")
         self.assertEqual(result["source"], "issue")
@@ -429,9 +429,37 @@ class TestExtractEvent(unittest.TestCase):
         fields = ["id", "event", "created_at"]
         pr_numbers = {42}
 
-        result = _extract_event(raw_event, fields, pr_numbers)
+        result = _extract_event(raw_event, fields, pr_numbers, issue_number=42)
 
         self.assertEqual(set(result.keys()), {"id", "event", "created_at"})
+
+    def test_extract_event_with_real_api_shape(self):
+        from src.scrape import _extract_event
+
+        raw_event = {
+            "id": 26682461804,
+            "node_id": "RRE_lADO...",
+            "url": "https://api.github.com/repos/owner/repo/issues/events/26682461804",
+            "actor": {"login": "kaungkhantko"},
+            "event": "review_requested",
+            "created_at": "2026-06-15T16:18:01Z",
+            "review_requester": {"login": "kaungkhantko"},
+            "requested_reviewer": {"login": "Copilot"},
+            "commit_id": None,
+            "commit_url": None,
+            "performed_via_github_app": None,
+        }
+        fields = ["id", "event", "created_at", "actor", "issue_number", "pr_number", "source", "details"]
+        pr_numbers = {42}
+        issue_number = 42
+
+        result = _extract_event(raw_event, fields, pr_numbers, issue_number)
+
+        self.assertEqual(result["issue_number"], 42)
+        self.assertEqual(result["pr_number"], 42)
+        self.assertEqual(result["source"], "pull_request")
+        self.assertEqual(result["event"], "review_requested")
+        self.assertEqual(result["actor"], "kaungkhantko")
 
 
 class TestItemId(unittest.TestCase):
@@ -499,7 +527,7 @@ class TestFetchEvents(unittest.TestCase):
         pr_numbers = {42}
         user = "kaungkhantko"
 
-        result = fetch_events(raw_events, fields, since, until, pr_numbers, user)
+        result = fetch_events(raw_events, fields, since, until, pr_numbers, user, issue_number=42)
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["id"], "1")

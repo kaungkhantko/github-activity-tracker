@@ -103,8 +103,7 @@ _extract_commit = make_field_extractor(lambda commit: {
 })
 
 
-def _extract_event(event: Record, fields: list[str], pr_numbers: set[int]) -> Record:
-    issue_number = (event.get("issue") or {}).get("number")
+def _extract_event(event: Record, fields: list[str], pr_numbers: set[int], issue_number: int) -> Record:
     event_type = event.get("event")
     if event_type in ("renamed", "edited"):
         details = {"changes": event.get("changes", {})}
@@ -166,6 +165,7 @@ def fetch_events(
     until: str,
     pr_numbers: set[int],
     user: str,
+    issue_number: int,
 ) -> list[Record]:
     result = []
     for event in raw_events:
@@ -175,7 +175,7 @@ def fetch_events(
         created_at = event.get("created_at", "")
         if not (since <= created_at <= until):
             continue
-        result.append(_extract_event(event, fields, pr_numbers))
+        result.append(_extract_event(event, fields, pr_numbers, issue_number))
     return result
 
 
@@ -277,7 +277,7 @@ def fetch_repo_activity(
             for number in all_numbers:
                 raw = run_gh(_event_command(repo, number))
                 user_events.extend(fetch_events(
-                    raw, event_fields, since, until, pr_numbers, user,
+                    raw, event_fields, since, until, pr_numbers, user, number,
                 ))
             activity_by_user[user] = deep_merge_with(
                 activity_by_user[user], {"events": user_events}, _take_right,
