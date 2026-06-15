@@ -237,7 +237,7 @@ def _load_day_file(data_dir: Path, day: str) -> Record:
 
 
 def _item_id(item: Record) -> str:
-    for key in ("number", "sha", "url"):
+    for key in ("id", "number", "sha", "url"):
         if key in item:
             return str(item[key])
     return str(item)

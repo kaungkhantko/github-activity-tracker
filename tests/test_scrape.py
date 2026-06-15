@@ -384,3 +384,29 @@ class TestExtractEvent(unittest.TestCase):
         result = _extract_event(raw_event, fields, pr_numbers)
 
         self.assertEqual(set(result.keys()), {"id", "event", "created_at"})
+
+
+class TestItemId(unittest.TestCase):
+    def test_item_id_prefers_id_field(self):
+        from src.scrape import _item_id
+
+        item = {"id": "12345", "number": 42, "sha": "abc", "url": "https://example.com"}
+        self.assertEqual(_item_id(item), "12345")
+
+    def test_item_id_falls_back_to_number(self):
+        from src.scrape import _item_id
+
+        item = {"number": 42, "url": "https://example.com"}
+        self.assertEqual(_item_id(item), "42")
+
+    def test_item_id_falls_back_to_sha(self):
+        from src.scrape import _item_id
+
+        item = {"sha": "abc123"}
+        self.assertEqual(_item_id(item), "abc123")
+
+    def test_item_id_falls_back_to_url(self):
+        from src.scrape import _item_id
+
+        item = {"url": "https://example.com/foo"}
+        self.assertEqual(_item_id(item), "https://example.com/foo")
