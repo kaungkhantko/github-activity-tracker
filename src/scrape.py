@@ -5,7 +5,7 @@ import subprocess
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Final
 
 Record = dict[str, Any]
 
@@ -214,7 +214,7 @@ def _event_command(repo: str, issue_number: int) -> list[str]:
     return ["api", f"repos/{repo}/issues/{issue_number}/events", "-X", "GET", "--paginate"]
 
 
-ACTIVITY_STRATEGIES: dict[str, dict[str, Any]] = {
+ACTIVITY_STRATEGIES: Final[dict[str, dict[str, Any]]] = {
     "prs": {
         "command": lambda repo, user, since, until, fields: _list_command("pr", repo, user, since, until, fields),
         "extractor": fetch_prs,
@@ -338,7 +338,7 @@ def deep_merge_with(left: Any, right: Any, leaf_merger: Callable[[Any, Any], Any
     return result
 
 
-_merge_items = make_unique_merger(_item_id)
+_merge_items: Final[Callable[[list[Record], list[Record]], list[Record]]] = make_unique_merger(_item_id)
 
 
 def _nested_group(entries: list[tuple[list[str], Any]]) -> Record:

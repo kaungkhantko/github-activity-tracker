@@ -15,7 +15,7 @@ from src.scrape import (
 
 
 class TestConfig(unittest.TestCase):
-    def test_load_config_expands_tilde(self):
+    def test_load_config_expands_tilde(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.json"
             config = {
@@ -37,14 +37,14 @@ class TestConfig(unittest.TestCase):
 
 
 class TestDateRange(unittest.TestCase):
-    def test_get_date_range_with_last_run(self):
+    def test_get_date_range_with_last_run(self) -> None:
         now = datetime.now(timezone.utc)
         last_run = now - timedelta(hours=3)
         since, until = get_date_range(last_run, bootstrap_days=7)
         self.assertEqual(since, last_run.isoformat())
         self.assertLess(datetime.fromisoformat(until) - now, timedelta(minutes=1))
 
-    def test_get_date_range_without_last_run(self):
+    def test_get_date_range_without_last_run(self) -> None:
         now = datetime.now(timezone.utc)
         since, until = get_date_range(None, bootstrap_days=2)
         expected_since = (now - timedelta(days=2)).isoformat()
@@ -56,7 +56,7 @@ class TestDateRange(unittest.TestCase):
 
 
 class TestLastRun(unittest.TestCase):
-    def test_read_last_run_returns_datetime(self):
+    def test_read_last_run_returns_datetime(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             last_run_path = Path(tmpdir) / "last_run.txt"
             now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -65,12 +65,12 @@ class TestLastRun(unittest.TestCase):
             result = read_last_run(last_run_path)
             self.assertEqual(result, now)
 
-    def test_read_last_run_missing_returns_none(self):
+    def test_read_last_run_missing_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             last_run_path = Path(tmpdir) / "last_run.txt"
             self.assertIsNone(read_last_run(last_run_path))
 
-    def test_write_last_run(self):
+    def test_write_last_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             last_run_path = Path(tmpdir) / "last_run.txt"
             now = datetime(2026, 6, 12, 12, 0, 0, tzinfo=timezone.utc)
@@ -79,7 +79,7 @@ class TestLastRun(unittest.TestCase):
 
 
 class TestRunGh(unittest.TestCase):
-    def test_run_gh_returns_json(self):
+    def test_run_gh_returns_json(self) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = '[{"number": 1}]'
@@ -92,7 +92,7 @@ class TestRunGh(unittest.TestCase):
             args, kwargs = mock_run.call_args
             self.assertEqual(args[0], ["gh", "pr", "list", "--json", "number"])
 
-    def test_run_gh_empty_stdout_returns_empty_list(self):
+    def test_run_gh_empty_stdout_returns_empty_list(self) -> None:
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = ""
@@ -104,7 +104,7 @@ class TestRunGh(unittest.TestCase):
 
 
 class TestFetchPrs(unittest.TestCase):
-    def test_fetch_prs_filters_fields(self):
+    def test_fetch_prs_filters_fields(self) -> None:
         raw_prs = [
             {
                 "number": 1,
@@ -139,7 +139,7 @@ class TestFetchPrs(unittest.TestCase):
 
 
 class TestFetchIssues(unittest.TestCase):
-    def test_fetch_issues_filters_fields(self):
+    def test_fetch_issues_filters_fields(self) -> None:
         raw = [
             {
                 "number": 1,
@@ -161,7 +161,7 @@ class TestFetchIssues(unittest.TestCase):
 
 
 class TestFetchComments(unittest.TestCase):
-    def test_fetch_comments_filters_fields(self):
+    def test_fetch_comments_filters_fields(self) -> None:
         raw = [
             {
                 "issue": {"number": 1},
@@ -186,7 +186,7 @@ class TestFetchComments(unittest.TestCase):
 
 
 class TestSplitByDay(unittest.TestCase):
-    def test_split_by_day_groups_items_by_day(self):
+    def test_split_by_day_groups_items_by_day(self) -> None:
         items = [
             {"created_at": "2026-06-12T10:00:00Z"},
             {"created_at": "2026-06-13T11:00:00Z"},
@@ -200,7 +200,7 @@ class TestSplitByDay(unittest.TestCase):
 
 
 class TestWriteDailyData(unittest.TestCase):
-    def test_write_daily_data_appends_to_existing(self):
+    def test_write_daily_data_appends_to_existing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             data_dir = Path(tmpdir)
             day = "2026-06-12"
@@ -228,7 +228,7 @@ class TestWriteDailyData(unittest.TestCase):
                 [{"number": 1, "title": "PR One"}]
             )
 
-    def test_write_daily_data_deduplicates(self):
+    def test_write_daily_data_deduplicates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             data_dir = Path(tmpdir)
             day = "2026-06-12"
@@ -264,7 +264,7 @@ class TestWriteDailyData(unittest.TestCase):
                 1
             )
 
-    def test_write_daily_data_includes_events(self):
+    def test_write_daily_data_includes_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             data_dir = Path(tmpdir)
             day = "2026-06-14"
@@ -314,7 +314,7 @@ class TestWriteDailyData(unittest.TestCase):
 
 
 class TestFetchCommits(unittest.TestCase):
-    def test_fetch_commits_filters_fields(self):
+    def test_fetch_commits_filters_fields(self) -> None:
         raw = [
             {
                 "sha": "abc123",
@@ -337,7 +337,7 @@ class TestFetchCommits(unittest.TestCase):
 
 
 class TestExtractEvent(unittest.TestCase):
-    def test_extract_event_renamed(self):
+    def test_extract_event_renamed(self) -> None:
         from src.scrape import _extract_event
 
         raw_event = {
@@ -365,7 +365,7 @@ class TestExtractEvent(unittest.TestCase):
             "details": {"changes": {"title": {"from": "Old Title"}}},
         })
 
-    def test_extract_event_edited(self):
+    def test_extract_event_edited(self) -> None:
         from src.scrape import _extract_event
 
         raw_event = {
@@ -393,7 +393,7 @@ class TestExtractEvent(unittest.TestCase):
             "details": {"changes": {"body": {"from": "old body text"}}},
         })
 
-    def test_extract_event_labeled(self):
+    def test_extract_event_labeled(self) -> None:
         from src.scrape import _extract_event
 
         raw_event = {
@@ -414,7 +414,7 @@ class TestExtractEvent(unittest.TestCase):
         self.assertEqual(result["source"], "issue")
         self.assertEqual(result["details"], {"label": {"name": "bug"}})
 
-    def test_extract_event_filters_fields(self):
+    def test_extract_event_filters_fields(self) -> None:
         from src.scrape import _extract_event
 
         raw_event = {
@@ -433,7 +433,7 @@ class TestExtractEvent(unittest.TestCase):
 
         self.assertEqual(set(result.keys()), {"id", "event", "created_at"})
 
-    def test_extract_event_with_real_api_shape(self):
+    def test_extract_event_with_real_api_shape(self) -> None:
         from src.scrape import _extract_event
 
         raw_event = {
@@ -463,25 +463,25 @@ class TestExtractEvent(unittest.TestCase):
 
 
 class TestItemId(unittest.TestCase):
-    def test_item_id_prefers_id_field(self):
+    def test_item_id_prefers_id_field(self) -> None:
         from src.scrape import _item_id
 
         item = {"id": "12345", "number": 42, "sha": "abc", "url": "https://example.com"}
         self.assertEqual(_item_id(item), "12345")
 
-    def test_item_id_falls_back_to_number(self):
+    def test_item_id_falls_back_to_number(self) -> None:
         from src.scrape import _item_id
 
         item = {"number": 42, "url": "https://example.com"}
         self.assertEqual(_item_id(item), "42")
 
-    def test_item_id_falls_back_to_sha(self):
+    def test_item_id_falls_back_to_sha(self) -> None:
         from src.scrape import _item_id
 
         item = {"sha": "abc123"}
         self.assertEqual(_item_id(item), "abc123")
 
-    def test_item_id_falls_back_to_url(self):
+    def test_item_id_falls_back_to_url(self) -> None:
         from src.scrape import _item_id
 
         item = {"url": "https://example.com/foo"}
@@ -489,7 +489,7 @@ class TestItemId(unittest.TestCase):
 
 
 class TestFetchEvents(unittest.TestCase):
-    def test_fetch_events_filters_by_actor_and_window(self):
+    def test_fetch_events_filters_by_actor_and_window(self) -> None:
         from src.scrape import fetch_events
         from datetime import datetime, timezone
 
@@ -536,7 +536,7 @@ class TestFetchEvents(unittest.TestCase):
 
 
 class TestFetchRepoActivityEvents(unittest.TestCase):
-    def test_fetch_repo_activity_includes_events(self):
+    def test_fetch_repo_activity_includes_events(self) -> None:
         from src.scrape import fetch_repo_activity
 
         prs_raw = [{"number": 42, "title": "PR", "state": "open", "url": "https://.../pull/42",
