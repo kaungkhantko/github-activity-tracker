@@ -107,14 +107,15 @@ _extract_commit = make_field_extractor(lambda commit: {
 
 def _extract_event(event: Record, fields: list[str], pr_numbers: set[int], issue_number: int) -> Record:
     event_type = event.get("event")
-    if event_type in ("renamed", "edited"):
-        details = {"changes": event.get("changes", {})}
-    elif event_type in ("labeled", "unlabeled"):
-        details = {"label": event.get("label", {})}
-    elif event_type in ("assigned", "unassigned"):
-        details = {"assignee": event.get("assignee", {})}
-    else:
-        details = {}
+    match event_type:
+        case "renamed" | "edited":
+            details = {"changes": event.get("changes", {})}
+        case "labeled" | "unlabeled":
+            details = {"label": event.get("label", {})}
+        case "assigned" | "unassigned":
+            details = {"assignee": event.get("assignee", {})}
+        case _:
+            details = {}
 
     mapping = {
         "id": event.get("id"),
@@ -135,7 +136,7 @@ fetch_comments = make_fetcher(_extract_comment)
 fetch_commits = make_fetcher(_extract_commit)
 
 
-def _discover_issue_numbers(activity_by_user: dict[str, Record], user: str) -> tuple[set[int], set[int]]:
+def _discover_issue_numbers(activity_by_user: dict[str, Record], user: str) -> tuple[frozenset[int], frozenset[int]]:
     """Return (pr_numbers, issue_numbers) the user authored or commented on."""
     pr_numbers: set[int] = set()
     issue_numbers: set[int] = set()
@@ -157,7 +158,7 @@ def _discover_issue_numbers(activity_by_user: dict[str, Record], user: str) -> t
         elif comment.get("issue_number"):
             issue_numbers.add(comment["issue_number"])
 
-    return pr_numbers, issue_numbers
+    return frozenset(pr_numbers), frozenset(issue_numbers)
 
 
 def fetch_events(
@@ -305,10 +306,10 @@ def _load_day_file(data_dir: Path, day: str) -> Record:
 
 
 def _item_id(item: Record) -> str:
-    for key in ("id", "number", "sha", "url"):
-        if key in item:
-            return str(item[key])
-    return str(item)
+    return next(
+        (str(item[k]) for k in ("id", "number", "sha", "url") if k in item),
+        str(item),
+    )
 
 
 def make_unique_merger(id_extractor: Callable[[Record], str]) -> Callable[[list[Record], list[Record]], list[Record]]:
