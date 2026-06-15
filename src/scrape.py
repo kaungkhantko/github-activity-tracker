@@ -4,10 +4,19 @@ import os
 import subprocess
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Final
 
 Record = dict[str, Any]
+
+
+class ActivityType(str, Enum):
+    PRS = "prs"
+    ISSUES = "issues"
+    COMMENTS = "comments"
+    COMMITS = "commits"
+    EVENTS = "events"
 
 
 def load_config(config_path: Path) -> Record:
@@ -217,21 +226,21 @@ def _event_command(repo: str, issue_number: int) -> list[str]:
     return ["api", f"repos/{repo}/issues/{issue_number}/events", "-X", "GET", "--paginate"]
 
 
-ACTIVITY_STRATEGIES: Final[dict[str, dict[str, Any]]] = {
-    "prs": {
+ACTIVITY_STRATEGIES: Final[dict[ActivityType, dict[str, Any]]] = {
+    ActivityType.PRS: {
         "command": lambda repo, user, since, until, fields: _list_command("pr", repo, user, since, until, fields),
         "extractor": fetch_prs,
     },
-    "issues": {
+    ActivityType.ISSUES: {
         "command": lambda repo, user, since, until, fields: _list_command("issue", repo, user, since, until, fields),
         "extractor": fetch_issues,
     },
-    "comments": {
+    ActivityType.COMMENTS: {
         "command": lambda repo, user, since, until, fields: _comment_command(repo, since),
         "extractor": fetch_comments,
         "author_getter": lambda item: _extract_scalar(item.get("author")),
     },
-    "commits": {
+    ActivityType.COMMITS: {
         "command": lambda repo, user, since, until, fields: _commit_command(repo, user, since, until),
         "extractor": fetch_commits,
     },
@@ -266,12 +275,12 @@ def fetch_repo_activity(
 ) -> dict[str, Record]:
     """Fetch activity from GitHub. This function is impure — it calls `run_gh`."""
     activity_by_user: dict[str, Record] = {user: {} for user in users}
-    standard_types = [t for t in activity_types if t != "events"]
+    standard_types = [t for t in activity_types if t != ActivityType.EVENTS]
     for activity_type in standard_types:
         fetched = _fetch_activity_type(activity_type, repo, users, fields[activity_type], since, until)
         activity_by_user = deep_merge_with(activity_by_user, fetched, _take_right)
 
-    if "events" in activity_types:
+    if ActivityType.EVENTS in activity_types:
         event_fields = fields["events"]
         for user in users:
             pr_numbers, issue_numbers = _discover_issue_numbers(activity_by_user, user)
