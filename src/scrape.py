@@ -134,6 +134,31 @@ fetch_comments = make_fetcher(_extract_comment)
 fetch_commits = make_fetcher(_extract_commit)
 
 
+def _discover_issue_numbers(activity_by_user: dict[str, Record], user: str) -> tuple[set[int], set[int]]:
+    """Return (pr_numbers, issue_numbers) the user authored or commented on."""
+    pr_numbers: set[int] = set()
+    issue_numbers: set[int] = set()
+
+    user_activity = activity_by_user.get(user, {})
+    for pr in user_activity.get("prs", []):
+        if "number" in pr:
+            pr_numbers.add(pr["number"])
+            issue_numbers.add(pr["number"])
+
+    for issue in user_activity.get("issues", []):
+        if "number" in issue:
+            issue_numbers.add(issue["number"])
+
+    for comment in user_activity.get("comments", []):
+        if comment.get("type") == "pr_comment" and comment.get("pr_number"):
+            pr_numbers.add(comment["pr_number"])
+            issue_numbers.add(comment["pr_number"])
+        elif comment.get("issue_number"):
+            issue_numbers.add(comment["issue_number"])
+
+    return pr_numbers, issue_numbers
+
+
 def fetch_events(
     raw_events: list[Record],
     fields: list[str],
@@ -183,6 +208,10 @@ def _commit_command(repo: str, user: str, since: str, until: str) -> list[str]:
         "-f", f"since={since}", "-f", f"until={until}",
         "--paginate",
     ]
+
+
+def _event_command(repo: str, issue_number: int) -> list[str]:
+    return ["api", f"repos/{repo}/issues/{issue_number}/events", "-X", "GET", "--paginate"]
 
 
 ACTIVITY_STRATEGIES: dict[str, dict[str, Any]] = {
