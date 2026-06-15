@@ -286,3 +286,101 @@ class TestFetchCommits(unittest.TestCase):
             "author": "owner",
             "files_changed": ["src/main.py"]
         })
+
+
+class TestExtractEvent(unittest.TestCase):
+    def test_extract_event_renamed(self):
+        from src.scrape import _extract_event
+
+        raw_event = {
+            "id": "12345",
+            "event": "renamed",
+            "created_at": "2026-06-14T10:00:00Z",
+            "actor": {"login": "kaungkhantko"},
+            "issue": {"number": 42},
+            "url": "https://api.github.com/repos/owner/repo/issues/events/12345",
+            "changes": {"title": {"from": "Old Title"}},
+        }
+        fields = ["id", "event", "created_at", "actor", "issue_number", "pr_number", "source", "details"]
+        pr_numbers = {42}
+
+        result = _extract_event(raw_event, fields, pr_numbers)
+
+        self.assertEqual(result, {
+            "id": "12345",
+            "event": "renamed",
+            "created_at": "2026-06-14T10:00:00Z",
+            "actor": "kaungkhantko",
+            "issue_number": 42,
+            "pr_number": 42,
+            "source": "pull_request",
+            "details": {"changes": {"title": {"from": "Old Title"}}},
+        })
+
+    def test_extract_event_edited(self):
+        from src.scrape import _extract_event
+
+        raw_event = {
+            "id": "67890",
+            "event": "edited",
+            "created_at": "2026-06-14T11:00:00Z",
+            "actor": {"login": "kaungkhantko"},
+            "issue": {"number": 7},
+            "url": "https://api.github.com/repos/owner/repo/issues/events/67890",
+            "changes": {"body": {"from": "old body text"}},
+        }
+        fields = ["id", "event", "created_at", "actor", "issue_number", "pr_number", "source", "details"]
+        pr_numbers = set()
+
+        result = _extract_event(raw_event, fields, pr_numbers)
+
+        self.assertEqual(result, {
+            "id": "67890",
+            "event": "edited",
+            "created_at": "2026-06-14T11:00:00Z",
+            "actor": "kaungkhantko",
+            "issue_number": 7,
+            "pr_number": 7,
+            "source": "issue",
+            "details": {"changes": {"body": {"from": "old body text"}}},
+        })
+
+    def test_extract_event_labeled(self):
+        from src.scrape import _extract_event
+
+        raw_event = {
+            "id": "11111",
+            "event": "labeled",
+            "created_at": "2026-06-14T12:00:00Z",
+            "actor": {"login": "kaungkhantko"},
+            "issue": {"number": 5},
+            "url": "https://api.github.com/repos/owner/repo/issues/events/11111",
+            "label": {"name": "bug"},
+        }
+        fields = ["id", "event", "created_at", "actor", "issue_number", "pr_number", "source", "details"]
+        pr_numbers = set()
+
+        result = _extract_event(raw_event, fields, pr_numbers)
+
+        self.assertEqual(result["event"], "labeled")
+        self.assertEqual(result["source"], "issue")
+        self.assertEqual(result["details"], {"label": {"name": "bug"}})
+
+    def test_extract_event_filters_fields(self):
+        from src.scrape import _extract_event
+
+        raw_event = {
+            "id": "12345",
+            "event": "renamed",
+            "created_at": "2026-06-14T10:00:00Z",
+            "actor": {"login": "kaungkhantko"},
+            "issue": {"number": 42},
+            "url": "https://api.github.com/repos/owner/repo/issues/events/12345",
+            "changes": {"title": {"from": "Old Title"}},
+        }
+        fields = ["id", "event", "created_at"]
+        pr_numbers = {42}
+
+        result = _extract_event(raw_event, fields, pr_numbers)
+
+        self.assertEqual(set(result.keys()), {"id", "event", "created_at"})

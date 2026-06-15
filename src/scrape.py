@@ -103,6 +103,31 @@ _extract_commit = make_field_extractor(lambda commit: {
 })
 
 
+def _extract_event(event: Record, fields: list[str], pr_numbers: set[int]) -> Record:
+    issue_number = (event.get("issue") or {}).get("number")
+    event_type = event.get("event")
+    if event_type in ("renamed", "edited"):
+        details = {"changes": event.get("changes", {})}
+    elif event_type in ("labeled", "unlabeled"):
+        details = {"label": event.get("label", {})}
+    elif event_type in ("assigned", "unassigned"):
+        details = {"assignee": event.get("assignee", {})}
+    else:
+        details = {}
+
+    mapping = {
+        "id": event.get("id"),
+        "event": event_type,
+        "created_at": event.get("created_at"),
+        "actor": _extract_scalar(event.get("actor")),
+        "issue_number": issue_number,
+        "pr_number": issue_number,
+        "source": "pull_request" if issue_number in pr_numbers else "issue",
+        "details": details,
+    }
+    return {field: mapping[field] for field in fields if field in mapping}
+
+
 fetch_prs = make_fetcher(_normalize_item)
 fetch_issues = make_fetcher(_normalize_item)
 fetch_comments = make_fetcher(_extract_comment)
