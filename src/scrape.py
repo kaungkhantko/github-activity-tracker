@@ -263,9 +263,26 @@ def fetch_repo_activity(
 ) -> dict[str, Record]:
     """Fetch activity from GitHub. This function is impure — it calls `run_gh`."""
     activity_by_user: dict[str, Record] = {user: {} for user in users}
-    for activity_type in activity_types:
+    standard_types = [t for t in activity_types if t != "events"]
+    for activity_type in standard_types:
         fetched = _fetch_activity_type(activity_type, repo, users, fields[activity_type], since, until)
         activity_by_user = deep_merge_with(activity_by_user, fetched, _take_right)
+
+    if "events" in activity_types:
+        event_fields = fields["events"]
+        for user in users:
+            pr_numbers, issue_numbers = _discover_issue_numbers(activity_by_user, user)
+            all_numbers = pr_numbers | issue_numbers
+            user_events: list[Record] = []
+            for number in all_numbers:
+                raw = run_gh(_event_command(repo, number))
+                user_events.extend(fetch_events(
+                    raw, event_fields, since, until, pr_numbers, user,
+                ))
+            activity_by_user[user] = deep_merge_with(
+                activity_by_user[user], {"events": user_events}, _take_right,
+            )
+
     return activity_by_user
 
 

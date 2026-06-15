@@ -457,3 +457,63 @@ class TestFetchEvents(unittest.TestCase):
         self.assertEqual(result[0]["id"], "1")
         self.assertEqual(result[0]["event"], "renamed")
         self.assertEqual(result[0]["actor"], "kaungkhantko")
+
+
+class TestFetchRepoActivityEvents(unittest.TestCase):
+    def test_fetch_repo_activity_includes_events(self):
+        from src.scrape import fetch_repo_activity
+
+        prs_raw = [{"number": 42, "title": "PR", "state": "open", "url": "https://.../pull/42",
+                    "createdAt": "2026-06-14T10:00:00Z", "closedAt": None, "mergedAt": None,
+                    "author": {"login": "kaungkhantko"}, "labels": [], "body": ""}]
+        issues_raw = []
+        comments_raw = [{"issue": {"number": 7}, "pullRequest": None,
+                         "body": "comment", "url": "https://...",
+                         "createdAt": "2026-06-14T10:00:00Z",
+                         "author": {"login": "kaungkhantko"}}]
+        events_pr42 = [{"id": "1", "event": "renamed", "created_at": "2026-06-14T10:00:00Z",
+                        "actor": {"login": "kaungkhantko"}, "issue": {"number": 42},
+                        "url": "https://api.github.com/.../events/1",
+                        "changes": {"title": {"from": "old"}}}]
+        events_issue7 = [{"id": "2", "event": "labeled", "created_at": "2026-06-14T11:00:00Z",
+                          "actor": {"login": "kaungkhantko"}, "issue": {"number": 7},
+                          "url": "https://api.github.com/.../events/2",
+                          "label": {"name": "bug"}}]
+
+        def mock_run_gh(args):
+            if "issues/42/events" in str(args):
+                return events_pr42
+            if "issues/7/events" in str(args):
+                return events_issue7
+            if args[0] == "pr" and "list" in args:
+                return prs_raw
+            if "issues/comments" in str(args):
+                return comments_raw
+            if args[0] == "issue" and "list" in args:
+                return issues_raw
+            return []
+
+        activity_types = ["prs", "issues", "comments", "events"]
+        fields = {
+            "prs": ["number", "title", "state", "url", "created_at", "closed_at", "merged_at", "author", "labels", "body"],
+            "issues": ["number", "title", "state", "url", "created_at", "closed_at", "author", "labels", "body"],
+            "comments": ["type", "issue_number", "pr_number", "body", "url", "created_at", "author"],
+            "events": ["id", "event", "created_at", "actor", "issue_number", "pr_number", "source", "details"],
+        }
+
+        with patch("src.scrape.run_gh", side_effect=mock_run_gh):
+            result = fetch_repo_activity(
+                repo="owner/repo",
+                users=["kaungkhantko"],
+                activity_types=activity_types,
+                fields=fields,
+                since="2026-06-14T00:00:00Z",
+                until="2026-06-14T23:59:59Z",
+            )
+
+        events = result["kaungkhantko"]["events"]
+        self.assertEqual(len(events), 2)
+        event_ids = {e["id"] for e in events}
+        self.assertEqual(event_ids, {"1", "2"})
+        sources = {e["source"] for e in events}
+        self.assertEqual(sources, {"pull_request", "issue"})
