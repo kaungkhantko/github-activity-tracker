@@ -264,6 +264,54 @@ class TestWriteDailyData(unittest.TestCase):
                 1
             )
 
+    def test_write_daily_data_includes_events(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            day = "2026-06-14"
+            existing = {
+                "date": day,
+                "repos": {
+                    "owner/repo-1": {
+                        "users": {
+                            "kaungkhantko": {
+                                "prs": [{"number": 1, "title": "PR One"}]
+                            }
+                        }
+                    }
+                }
+            }
+            (data_dir / f"{day}.json").write_text(json.dumps(existing))
+
+            new_data = {
+                "owner/repo-1": {
+                    "users": {
+                        "kaungkhantko": {
+                            "events": [
+                                {
+                                    "id": "12345",
+                                    "event": "renamed",
+                                    "created_at": "2026-06-14T10:00:00Z",
+                                    "actor": "kaungkhantko",
+                                    "issue_number": 42,
+                                    "pr_number": 42,
+                                    "source": "pull_request",
+                                    "details": {"changes": {"title": {"from": "old"}}}
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+
+            write_daily_data(data_dir, day, new_data)
+
+            updated = json.loads((data_dir / f"{day}.json").read_text())
+            user_data = updated["repos"]["owner/repo-1"]["users"]["kaungkhantko"]
+            self.assertEqual(user_data["prs"], [{"number": 1, "title": "PR One"}])
+            self.assertEqual(len(user_data["events"]), 1)
+            self.assertEqual(user_data["events"][0]["event"], "renamed")
+            self.assertEqual(user_data["events"][0]["source"], "pull_request")
+
 
 class TestFetchCommits(unittest.TestCase):
     def test_fetch_commits_filters_fields(self):
