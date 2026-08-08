@@ -574,15 +574,19 @@ def main() -> None:
         canonical = _resolve_repo_name(repo)
         if canonical != repo:
             logging.warning(f"{repo} has moved to {canonical}; scraping the canonical name")
-        logging.info(f"Fetching activity for {canonical}")
-        activity_by_repo[canonical] = fetch_repo_activity(
-            canonical,
-            identities,
-            config["activity_types"],
-            config["fields"],
-            since,
-            until,
-        )
+        try:
+            logging.info(f"Fetching activity for {canonical}")
+            activity_by_repo[canonical] = fetch_repo_activity(
+                canonical,
+                identities,
+                config["activity_types"],
+                config["fields"],
+                since,
+                until,
+            )
+        except Exception as error:
+            logging.error(f"Failed to scrape {canonical}: {error}")
+            continue
 
     for day, repo_data in group_by_day(activity_by_repo).items():
         write_daily_data(data_dir, day, repo_data)
