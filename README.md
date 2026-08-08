@@ -21,7 +21,12 @@ This copies `example-config.json` to `config.json` if it doesn't exist.
 Edit `config.json` (or `example-config.json` to update the template):
 
 - `repos`: list of repositories in `owner/repo` format
-- `users`: list of GitHub usernames to track
+- `identities`: map of a canonical identity key to the login/name/email
+  variants that count as that person. PRs and issues are queried per variant
+  via `--author`; comments, commits, and events are matched locally against
+  the variant list with case- and punctuation-insensitive comparison
+  (so `kaungkhant.ko` matches `Kaung Khant Ko`). Falls back to a `users`
+  list, treating each username as its own identity.
 - `activity_types`: which activity types to collect (`prs`, `issues`, `comments`, `commits`)
 - `fields`: fields to include for each activity type
 - `cron_schedule`: cron expression for how often to run
