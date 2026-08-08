@@ -614,3 +614,170 @@ class TestFetchRepoActivityEvents(unittest.TestCase):
         self.assertEqual(event_ids, {"1", "2"})
         sources = {e["source"] for e in events}
         self.assertEqual(sources, {"pull_request", "issue"})
+
+
+class TestLoadIdentities(unittest.TestCase):
+    def test_load_identities_from_config(self) -> None:
+        from src.scrape import _load_identities
+
+        config = {
+            "identities": {
+                "kaungkhantko": ["kaungkhantko", "kaungkhant.ko", "Kaung Khant Ko"]
+            }
+        }
+        self.assertEqual(_load_identities(config), [
+            {"key": "kaungkhantko", "variants": ["kaungkhantko", "kaungkhant.ko", "Kaung Khant Ko"]},
+        ])
+
+    def test_load_identities_falls_back_to_users(self) -> None:
+        from src.scrape import _load_identities
+
+        config = {"users": ["alice", "bob"]}
+        self.assertEqual(_load_identities(config), [
+            {"key": "alice", "variants": ["alice"]},
+            {"key": "bob", "variants": ["bob"]},
+        ])
+
+
+class TestIdentityMatching(unittest.TestCase):
+    def test_identity_token_normalizes_case_and_punctuation(self) -> None:
+        from src.scrape import _identity_token
+
+        self.assertEqual(_identity_token("Kaung Khant Ko"), "kaungkhantko")
+        self.assertEqual(_identity_token("kaungkhant.ko"), "kaungkhantko")
+        self.assertEqual(_identity_token("kaungkhantko@gmail.com"), "kaungkhantkogmailcom")
+
+    def test_matches_identity_by_name_email_login(self) -> None:
+        from src.scrape import _matches_identity
+
+        variants = ["kaungkhantko", "kaungkhant.ko", "Kaung Khant Ko"]
+        self.assertTrue(_matches_identity(["Kaung Khant Ko"], variants))
+        self.assertTrue(_matches_identity(["kaungkhant.ko"], variants))
+        self.assertTrue(_matches_identity(["kaungkhantko"], variants))
+        self.assertFalse(_matches_identity(["somebody-else"], variants))
+
+    def test_commit_identity_matches_variants(self) -> None:
+        from src.scrape import _commit_identity_matches
+
+        variants = ["kaungkhantko", "kaungkhant.ko", "Kaung Khant Ko"]
+        by_name = {
+            "sha": "a",
+            "commit": {
+                "author": {"name": "Kaung Khant Ko", "email": "kaungkhantko@gmail.com"},
+                "committer": {"name": "Kaung Khant Ko", "email": "kaungkhantko@gmail.com"},
+            },
+            "author": None,
+        }
+        by_login = {
+            "sha": "b",
+            "commit": {
+                "author": {"name": "Other", "email": "other@example.com"},
+                "committer": {"name": "Other", "email": "other@example.com"},
+            },
+            "author": {"login": "kaungkhantko"},
+        }
+        stranger = {
+            "sha": "c",
+            "commit": {
+                "author": {"name": "Somebody Else", "email": "someone@example.com"},
+                "committer": {"name": "Somebody Else", "email": "someone@example.com"},
+            },
+            "author": {"login": "somebody-else"},
+        }
+        self.assertTrue(_commit_identity_matches(by_name, variants))
+        self.assertTrue(_commit_identity_matches(by_login, variants))
+        self.assertFalse(_commit_identity_matches(stranger, variants))
+
+
+class TestFetchRepoActivityIdentities(unittest.TestCase):
+    def test_merges_prs_across_variant_logins(self) -> None:
+        from src.scrape import fetch_repo_activity
+
+        def prs_for(login: str) -> list[dict]:
+            number = 1 if login == "kaungkhantko" else 2
+            return [{
+                "number": number,
+                "title": "PR",
+                "state": "open",
+                "url": f"https://github.com/owner/repo/pull/{number}",
+                "createdAt": "2026-06-14T10:00:00Z",
+                "closedAt": None,
+                "mergedAt": None,
+                "author": {"login": login},
+                "labels": [],
+                "body": "",
+            }]
+
+        def mock_run_gh(args):
+            if args[0] == "pr" and "list" in args:
+                return prs_for(args[args.index("--author") + 1])
+            if args[0] == "issue" and "list" in args:
+                return []
+            if "issues/comments" in str(args):
+                return []
+            return []
+
+        fields = {
+            "prs": ["number", "title", "state", "url", "created_at", "closed_at", "merged_at", "author", "labels", "body"],
+            "issues": ["number"],
+            "comments": ["type"],
+        }
+        identities = [{"key": "kaungkhantko", "variants": ["kaungkhantko", "kaungkhant.ko"]}]
+
+        with patch("src.scrape.run_gh", side_effect=mock_run_gh):
+            result = fetch_repo_activity(
+                repo="owner/repo",
+                identities=identities,
+                activity_types=["prs", "issues", "comments"],
+                fields=fields,
+                since="2026-06-14T00:00:00Z",
+                until="2026-06-14T23:59:59Z",
+            )
+
+        prs = result["kaungkhantko"]["prs"]
+        self.assertEqual({pr["number"] for pr in prs}, {1, 2})
+
+    def test_filters_commits_by_identity_variants(self) -> None:
+        from src.scrape import fetch_repo_activity
+
+        commits = [
+            {
+                "sha": "aaa",
+                "commit": {
+                    "author": {"name": "Kaung Khant Ko", "email": "kaungkhantko@gmail.com"},
+                    "committer": {"name": "Kaung Khant Ko", "email": "kaungkhantko@gmail.com"},
+                },
+                "author": {"login": "kaungkhantko"},
+                "html_url": "https://github.com/owner/repo/commit/aaa",
+            },
+            {
+                "sha": "bbb",
+                "commit": {
+                    "author": {"name": "Somebody Else", "email": "someone@example.com"},
+                    "committer": {"name": "Somebody Else", "email": "someone@example.com"},
+                },
+                "author": None,
+                "html_url": "https://github.com/owner/repo/commit/bbb",
+            },
+        ]
+
+        def mock_run_gh(args):
+            if "repos/owner/repo/commits" in str(args):
+                return commits
+            return []
+
+        fields = {"commits": ["sha", "message", "url", "date", "author", "files_changed"]}
+        identities = [{"key": "kaungkhantko", "variants": ["kaungkhantko", "kaungkhant.ko", "Kaung Khant Ko"]}]
+
+        with patch("src.scrape.run_gh", side_effect=mock_run_gh):
+            result = fetch_repo_activity(
+                repo="owner/repo",
+                identities=identities,
+                activity_types=["commits"],
+                fields=fields,
+                since="2026-06-14T00:00:00Z",
+                until="2026-06-14T23:59:59Z",
+            )
+
+        shas = {commit["sha"] for commit in result["kaungkhantko"]["commits"]}
+        self.assertEqual(shas, {"aaa"})
