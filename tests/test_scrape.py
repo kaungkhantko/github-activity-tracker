@@ -933,7 +933,7 @@ class TestResolveRepoName(unittest.TestCase):
     def test_resolve_returns_canonical_name_when_repo_moved(self) -> None:
         from src.scrape import _resolve_repo_name
 
-        with patch("src.scrape.run_gh", return_value="mutualpolydynamics/Odoo-IFM"):
+        with patch("src.scrape.run_gh", return_value={"full_name": "mutualpolydynamics/Odoo-IFM"}):
             self.assertEqual(_resolve_repo_name("kaungkhantko/Odoo-IFM"), "mutualpolydynamics/Odoo-IFM")
 
     def test_resolve_falls_back_when_query_fails(self) -> None:

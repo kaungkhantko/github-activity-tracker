@@ -67,9 +67,10 @@ def run_gh(args: list[str]) -> list[Record] | Record:
 def _resolve_repo_name(repo: str) -> str:
     """Return the canonical owner/repo name; REST follows transfer redirects that GraphQL-backed commands ignore."""
     try:
-        canonical = run_gh(["api", f"repos/{repo}", "--jq", ".full_name"])
+        response = run_gh(["api", f"repos/{repo}"])
     except RuntimeError:
         return repo
+    canonical = response.get("full_name") if isinstance(response, dict) else None
     return canonical if isinstance(canonical, str) and canonical else repo
 
 
