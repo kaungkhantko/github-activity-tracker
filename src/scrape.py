@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import subprocess
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,7 @@ class ActivityType(str, Enum):
     COMMENTS = "comments"
     COMMITS = "commits"
     EVENTS = "events"
+    REVIEWS = "reviews"
 
 
 def load_config(config_path: Path) -> Record:
@@ -131,6 +133,26 @@ _extract_comment = make_field_extractor(lambda comment: {
 })
 
 
+_PR_NUMBER_RE: Final[re.Pattern[str]] = re.compile(r"pull/(\d+)")
+
+
+def _review_pr_number(comment: Record) -> int | None:
+    match = _PR_NUMBER_RE.search(comment.get("html_url") or "")
+    return int(match.group(1)) if match else None
+
+
+_extract_review_comment = make_field_extractor(lambda comment: {
+    "type": "review_comment",
+    "pr_number": _review_pr_number(comment),
+    "body": comment.get("body"),
+    "url": comment.get("html_url"),
+    "created_at": comment.get("created_at"),
+    "author": _extract_scalar(comment.get("user")),
+    "path": comment.get("path"),
+    "line": comment.get("line"),
+})
+
+
 _extract_commit = make_field_extractor(lambda commit: {
     "sha": commit.get("sha"),
     "message": commit.get("commit", {}).get("message"),
@@ -172,12 +194,16 @@ fetch_comments = make_fetcher(_extract_comment)
 fetch_commits = make_fetcher(_extract_commit)
 
 
-def _discover_issue_numbers(activity_by_user: dict[str, Record], user: str) -> tuple[frozenset[int], frozenset[int]]:
-    """Return (pr_numbers, issue_numbers) the user authored or commented on."""
+def _discover_issue_numbers(
+    activity_by_user: dict[str, Record],
+    identity: Record,
+    repo: str,
+) -> tuple[frozenset[int], frozenset[int]]:
+    """Return (pr_numbers, issue_numbers) the user authored, commented on, or reviewed."""
     pr_numbers: set[int] = set()
     issue_numbers: set[int] = set()
 
-    user_activity = activity_by_user.get(user, {})
+    user_activity = activity_by_user.get(identity["key"], {})
     for pr in user_activity.get("prs", []):
         if "number" in pr:
             pr_numbers.add(pr["number"])
@@ -193,6 +219,15 @@ def _discover_issue_numbers(activity_by_user: dict[str, Record], user: str) -> t
             issue_numbers.add(comment["pr_number"])
         elif comment.get("issue_number"):
             issue_numbers.add(comment["issue_number"])
+
+    for variant in identity["variants"]:
+        try:
+            response = run_gh(["search", "prs", "--repo", repo, "--reviewed-by", variant, "--json", "number"])
+        except RuntimeError:
+            continue
+        for pr in response:
+            pr_numbers.add(pr["number"])
+            issue_numbers.add(pr["number"])
 
     return frozenset(pr_numbers), frozenset(issue_numbers)
 
@@ -215,6 +250,54 @@ def fetch_events(
         if not (since <= created_at <= until):
             continue
         result.append(_extract_event(event, fields, pr_numbers, issue_number))
+    return result
+
+
+def fetch_reviews(
+    raw_reviews: list[Record],
+    fields: list[str],
+    since: str,
+    until: str,
+    variants: list[str],
+    pr_number: int,
+) -> list[Record]:
+    result = []
+    for review in raw_reviews:
+        author = _extract_scalar(review.get("user"))
+        if not _matches_identity([author], variants):
+            continue
+        submitted_at = review.get("submitted_at", "")
+        if not (since <= submitted_at <= until):
+            continue
+        mapping = {
+            "id": review.get("id"),
+            "state": review.get("state"),
+            "submitted_at": submitted_at,
+            "author": author,
+            "url": review.get("html_url"),
+            "body": review.get("body"),
+            "pr_number": pr_number,
+        }
+        result.append({field: mapping[field] for field in fields if field in mapping})
+    return result
+
+
+def fetch_review_comments(
+    raw_comments: list[Record],
+    fields: list[str],
+    since: str,
+    until: str,
+    variants: list[str],
+) -> list[Record]:
+    result = []
+    for comment in raw_comments:
+        author = _extract_scalar(comment.get("user"))
+        if not _matches_identity([author], variants):
+            continue
+        created_at = comment.get("created_at", "")
+        if not (since <= created_at <= until):
+            continue
+        result.append(_extract_review_comment(comment, fields))
     return result
 
 
@@ -251,6 +334,14 @@ def _commit_command(repo: str, since: str, until: str) -> list[str]:
 
 def _event_command(repo: str, issue_number: int) -> list[str]:
     return ["api", f"repos/{repo}/issues/{issue_number}/events", "-X", "GET", "--paginate"]
+
+
+def _reviews_command(repo: str, pr_number: int) -> list[str]:
+    return ["api", f"repos/{repo}/pulls/{pr_number}/reviews", "-X", "GET", "--paginate"]
+
+
+def _review_comments_command(repo: str, since: str) -> list[str]:
+    return ["api", f"repos/{repo}/pulls/comments", "-X", "GET", "-f", f"since={since}", "--paginate"]
 
 
 ACTIVITY_STRATEGIES: Final[dict[ActivityType, dict[str, Any]]] = {
@@ -310,7 +401,7 @@ def fetch_repo_activity(
 ) -> dict[str, Record]:
     """Fetch activity from GitHub. This function is impure — it calls `run_gh`."""
     activity_by_identity: dict[str, Record] = {identity["key"]: {} for identity in identities}
-    standard_types = [t for t in activity_types if t != ActivityType.EVENTS]
+    standard_types = [t for t in activity_types if t not in (ActivityType.EVENTS, ActivityType.REVIEWS)]
     for activity_type in standard_types:
         for identity in identities:
             fetched = _fetch_activity_type(
@@ -318,21 +409,42 @@ def fetch_repo_activity(
             )
             activity_by_identity = deep_merge_with(activity_by_identity, fetched, _take_right)
 
-    if ActivityType.EVENTS in activity_types:
-        event_fields = fields["events"]
+    if ActivityType.EVENTS in activity_types or ActivityType.REVIEWS in activity_types:
         for identity in identities:
             key = identity["key"]
-            pr_numbers, issue_numbers = _discover_issue_numbers(activity_by_identity, key)
+            pr_numbers, issue_numbers = _discover_issue_numbers(activity_by_identity, identity, repo)
             all_numbers = pr_numbers | issue_numbers
-            user_events: list[Record] = []
-            for number in all_numbers:
-                raw = run_gh(_event_command(repo, number))
-                user_events.extend(fetch_events(
-                    raw, event_fields, since, until, pr_numbers, identity["variants"], number,
-                ))
-            activity_by_identity[key] = deep_merge_with(
-                activity_by_identity[key], {"events": user_events}, _take_right,
-            )
+
+            if ActivityType.EVENTS in activity_types:
+                event_fields = fields["events"]
+                user_events: list[Record] = []
+                for number in all_numbers:
+                    raw = run_gh(_event_command(repo, number))
+                    user_events.extend(fetch_events(
+                        raw, event_fields, since, until, pr_numbers, identity["variants"], number,
+                    ))
+                activity_by_identity[key] = deep_merge_with(
+                    activity_by_identity[key], {"events": user_events}, _take_right,
+                )
+
+            if ActivityType.REVIEWS in activity_types:
+                review_fields = fields["reviews"]
+                user_reviews: list[Record] = []
+                for number in all_numbers:
+                    raw = run_gh(_reviews_command(repo, number))
+                    user_reviews.extend(fetch_reviews(
+                        raw, review_fields, since, until, identity["variants"], number,
+                    ))
+                review_comments = fetch_review_comments(
+                    run_gh(_review_comments_command(repo, since)),
+                    fields["comments"], since, until, identity["variants"],
+                )
+                merged_comments = _merge_items(activity_by_identity[key].get("comments", []), review_comments)
+                activity_by_identity[key] = deep_merge_with(
+                    activity_by_identity[key],
+                    {"reviews": user_reviews, "comments": merged_comments},
+                    _take_right,
+                )
 
     return activity_by_identity
 
@@ -340,7 +452,7 @@ def fetch_repo_activity(
 def split_by_day(items: list[Record]) -> dict[str, list[Record]]:
     by_day: dict[str, list[Record]] = defaultdict(list)
     for item in items:
-        timestamp = item.get("created_at") or item.get("date")
+        timestamp = item.get("created_at") or item.get("date") or item.get("submitted_at")
         if timestamp:
             by_day[timestamp[:10]].append(item)
     return dict(by_day)
