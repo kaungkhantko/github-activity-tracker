@@ -64,6 +64,15 @@ def run_gh(args: list[str]) -> list[Record] | Record:
     return json.loads(stdout) if stdout else []
 
 
+def _resolve_repo_name(repo: str) -> str:
+    """Return the canonical owner/repo name; REST follows transfer redirects that GraphQL-backed commands ignore."""
+    try:
+        canonical = run_gh(["api", f"repos/{repo}", "--jq", ".full_name"])
+    except RuntimeError:
+        return repo
+    return canonical if isinstance(canonical, str) and canonical else repo
+
+
 def _to_snake_case(key: str) -> str:
     return key.replace("createdAt", "created_at").replace("closedAt", "closed_at").replace("mergedAt", "merged_at")
 
@@ -562,9 +571,12 @@ def main() -> None:
 
     activity_by_repo: dict[str, Record] = {}
     for repo in config["repos"]:
-        logging.info(f"Fetching activity for {repo}")
-        activity_by_repo[repo] = fetch_repo_activity(
-            repo,
+        canonical = _resolve_repo_name(repo)
+        if canonical != repo:
+            logging.warning(f"{repo} has moved to {canonical}; scraping the canonical name")
+        logging.info(f"Fetching activity for {canonical}")
+        activity_by_repo[canonical] = fetch_repo_activity(
+            canonical,
             identities,
             config["activity_types"],
             config["fields"],

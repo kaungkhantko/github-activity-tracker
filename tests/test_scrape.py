@@ -927,3 +927,23 @@ class TestFetchRepoActivityReviews(unittest.TestCase):
         self.assertEqual(user_data["reviews"][0]["state"], "COMMENTED")
         self.assertEqual(user_data["comments"][0]["type"], "review_comment")
         self.assertEqual(user_data["comments"][0]["pr_number"], 179)
+
+
+class TestResolveRepoName(unittest.TestCase):
+    def test_resolve_returns_canonical_name_when_repo_moved(self) -> None:
+        from src.scrape import _resolve_repo_name
+
+        with patch("src.scrape.run_gh", return_value="mutualpolydynamics/Odoo-IFM"):
+            self.assertEqual(_resolve_repo_name("kaungkhantko/Odoo-IFM"), "mutualpolydynamics/Odoo-IFM")
+
+    def test_resolve_falls_back_when_query_fails(self) -> None:
+        from src.scrape import _resolve_repo_name
+
+        with patch("src.scrape.run_gh", side_effect=RuntimeError("gh command failed")):
+            self.assertEqual(_resolve_repo_name("owner/repo"), "owner/repo")
+
+    def test_resolve_falls_back_on_empty_response(self) -> None:
+        from src.scrape import _resolve_repo_name
+
+        with patch("src.scrape.run_gh", return_value=[]):
+            self.assertEqual(_resolve_repo_name("owner/repo"), "owner/repo")
