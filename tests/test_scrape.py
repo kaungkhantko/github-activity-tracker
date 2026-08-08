@@ -781,3 +781,149 @@ class TestFetchRepoActivityIdentities(unittest.TestCase):
 
         shas = {commit["sha"] for commit in result["kaungkhantko"]["commits"]}
         self.assertEqual(shas, {"aaa"})
+
+
+class TestFetchReviewComments(unittest.TestCase):
+    def test_fetch_review_comments_filters_by_identity_and_window(self) -> None:
+        from src.scrape import fetch_review_comments
+
+        raw = [
+            {
+                "id": 1001,
+                "body": "ACL rows missing here",
+                "created_at": "2026-08-05T19:28:54Z",
+                "user": {"login": "kaungkhantko"},
+                "path": "ifm_hr/security/ir.model.access.csv",
+                "line": 8,
+                "html_url": "https://github.com/owner/repo/pull/179#discussion_r1001",
+            },
+            {
+                "id": 1002,
+                "body": "from another user",
+                "created_at": "2026-08-05T19:29:00Z",
+                "user": {"login": "walterhoops"},
+                "path": "ifm_hr/models/res_users.py",
+                "line": None,
+                "html_url": "https://github.com/owner/repo/pull/179#discussion_r1002",
+            },
+            {
+                "id": 1003,
+                "body": "outside window",
+                "created_at": "2026-08-07T20:23:05Z",
+                "user": {"login": "kaungkhantko"},
+                "path": "ifm_hr/models/res_users.py",
+                "line": None,
+                "html_url": "https://github.com/owner/repo/pull/179#discussion_r1003",
+            },
+        ]
+        fields = ["type", "pr_number", "body", "url", "created_at", "author", "path", "line"]
+        since = "2026-08-05T00:00:00Z"
+        until = "2026-08-05T23:59:59Z"
+        variants = ["kaungkhantko", "kaungkhant.ko", "Kaung Khant Ko"]
+
+        result = fetch_review_comments(raw, fields, since, until, variants)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["type"], "review_comment")
+        self.assertEqual(result[0]["pr_number"], 179)
+        self.assertEqual(result[0]["path"], "ifm_hr/security/ir.model.access.csv")
+        self.assertEqual(result[0]["line"], 8)
+        self.assertEqual(result[0]["author"], "kaungkhantko")
+
+
+class TestFetchReviews(unittest.TestCase):
+    def test_fetch_reviews_filters_by_identity_window_and_fields(self) -> None:
+        from src.scrape import fetch_reviews
+
+        raw = [
+            {"id": 1, "state": "COMMENTED", "submitted_at": "2026-08-05T19:28:54Z",
+             "user": {"login": "kaungkhantko"},
+             "html_url": "https://github.com/owner/repo/pull/179#pullrequestreview-1",
+             "body": "The decouple is good work."},
+            {"id": 2, "state": "APPROVED", "submitted_at": "2026-08-05T20:00:00Z",
+             "user": {"login": "walterhoops"},
+             "html_url": "https://github.com/owner/repo/pull/179#pullrequestreview-2",
+             "body": ""},
+        ]
+        fields = ["id", "state", "submitted_at", "author", "url", "body", "pr_number"]
+        since = "2026-08-05T00:00:00Z"
+        until = "2026-08-05T23:59:59Z"
+        variants = ["kaungkhantko"]
+
+        result = fetch_reviews(raw, fields, since, until, variants, pr_number=179)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], {
+            "id": 1,
+            "state": "COMMENTED",
+            "submitted_at": "2026-08-05T19:28:54Z",
+            "author": "kaungkhantko",
+            "url": "https://github.com/owner/repo/pull/179#pullrequestreview-1",
+            "body": "The decouple is good work.",
+            "pr_number": 179,
+        })
+
+
+class TestFetchRepoActivityReviews(unittest.TestCase):
+    def test_discovers_reviewed_prs_and_tracks_reviews(self) -> None:
+        from src.scrape import fetch_repo_activity
+
+        prs_raw = [{"number": 42, "title": "PR", "state": "open",
+                    "url": "https://github.com/owner/repo/pull/42",
+                    "createdAt": "2026-08-05T10:00:00Z", "closedAt": None, "mergedAt": None,
+                    "author": {"login": "kaungkhantko"}, "labels": [], "body": ""}]
+        reviews_raw = [
+            {"id": 1, "state": "COMMENTED", "submitted_at": "2026-08-05T19:28:54Z",
+             "user": {"login": "kaungkhantko"},
+             "html_url": "https://github.com/owner/repo/pull/179#pullrequestreview-1",
+             "body": "ACL rows missing."},
+            {"id": 2, "state": "COMMENTED", "submitted_at": "2026-08-05T20:00:00Z",
+             "user": {"login": "walterhoops"},
+             "html_url": "https://github.com/owner/repo/pull/179#pullrequestreview-2",
+             "body": ""},
+        ]
+        review_comments_raw = [
+            {"id": 1001, "body": "ACL rows missing here", "created_at": "2026-08-05T19:28:54Z",
+             "user": {"login": "kaungkhantko"}, "path": "ifm_hr/security/ir.model.access.csv", "line": 8,
+             "html_url": "https://github.com/owner/repo/pull/179#discussion_r1001"},
+        ]
+
+        def mock_run_gh(args):
+            if args[0] == "search" and "prs" in args:
+                return [{"number": 179}] if "kaungkhantko" in args else []
+            if args[0] == "pr" and "list" in args:
+                return prs_raw
+            if args[0] == "issue" and "list" in args:
+                return []
+            if "issues/comments" in str(args):
+                return []
+            if "pulls/179/reviews" in str(args):
+                return reviews_raw
+            if "pulls/comments" in str(args):
+                return review_comments_raw
+            return []
+
+        fields = {
+            "prs": ["number", "title", "state", "url", "created_at", "closed_at", "merged_at", "author", "labels", "body"],
+            "issues": ["number"],
+            "comments": ["type", "issue_number", "pr_number", "body", "url", "created_at", "author", "path", "line"],
+            "reviews": ["id", "state", "submitted_at", "author", "url", "body", "pr_number"],
+        }
+        identities = [{"key": "kaungkhantko", "variants": ["kaungkhantko", "kaungkhant.ko"]}]
+
+        with patch("src.scrape.run_gh", side_effect=mock_run_gh):
+            result = fetch_repo_activity(
+                repo="owner/repo",
+                identities=identities,
+                activity_types=["prs", "comments", "reviews"],
+                fields=fields,
+                since="2026-08-05T00:00:00Z",
+                until="2026-08-05T23:59:59Z",
+            )
+
+        user_data = result["kaungkhantko"]
+        self.assertEqual(len(user_data["reviews"]), 1)
+        self.assertEqual(user_data["reviews"][0]["pr_number"], 179)
+        self.assertEqual(user_data["reviews"][0]["state"], "COMMENTED")
+        self.assertEqual(user_data["comments"][0]["type"], "review_comment")
+        self.assertEqual(user_data["comments"][0]["pr_number"], 179)
