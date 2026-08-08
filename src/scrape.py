@@ -389,9 +389,10 @@ def main() -> None:
             f"{config_path} not found. Copy example-config.json to config.json and edit it."
         )
     config = load_config(config_path)
+    config_dir = config_path.parent
 
-    data_dir = Path(config["data_dir"])
-    log_file = Path(config["log_file"])
+    data_dir = config_dir / config["data_dir"]
+    log_file = config_dir / config["log_file"]
     last_run_path = log_file.parent / "last_run.txt"
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
