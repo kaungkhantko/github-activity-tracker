@@ -28,6 +28,15 @@ def load_config(config_path: Path) -> Record:
     }
 
 
+def _load_identities(config: Record) -> list[Record]:
+    if "identities" in config:
+        return [
+            {"key": key, "variants": list(variants)}
+            for key, variants in config["identities"].items()
+        ]
+    return [{"key": user, "variants": [user]} for user in config.get("users", [])]
+
+
 def get_date_range(last_run: datetime | None, bootstrap_days: int) -> tuple[str, str]:
     now = datetime.now(timezone.utc)
     since = last_run if last_run else now - timedelta(days=bootstrap_days)
@@ -66,6 +75,24 @@ def _extract_scalar(value: Any) -> Any:
     if isinstance(value, list):
         return [_extract_scalar(v) for v in value]
     return value
+
+
+def _identity_token(value: Any) -> str:
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def _matches_identity(candidates: list[Any], variants: list[str]) -> bool:
+    variant_tokens = {_identity_token(variant) for variant in variants}
+    return any(_identity_token(candidate) in variant_tokens for candidate in candidates)
+
+
+def _commit_identity_matches(commit: Record, variants: list[str]) -> bool:
+    author = commit.get("author")
+    candidates = [author.get("login")] if isinstance(author, dict) else []
+    for party_key in ("author", "committer"):
+        party = commit.get("commit", {}).get(party_key, {})
+        candidates.extend([party.get("name"), party.get("email")])
+    return _matches_identity([c for c in candidates if c], variants)
 
 
 def _normalize_item(item: Record, fields: list[str]) -> Record:
@@ -176,13 +203,13 @@ def fetch_events(
     since: str,
     until: str,
     pr_numbers: set[int],
-    user: str,
+    variants: list[str],
     issue_number: int,
 ) -> list[Record]:
     result = []
     for event in raw_events:
         actor = _extract_scalar(event.get("actor"))
-        if actor != user:
+        if not _matches_identity([actor], variants):
             continue
         created_at = event.get("created_at", "")
         if not (since <= created_at <= until):
@@ -213,10 +240,10 @@ def _comment_command(repo: str, since: str) -> list[str]:
     return ["api", f"repos/{repo}/issues/comments", "-X", "GET", "-f", f"since={since}", "--paginate"]
 
 
-def _commit_command(repo: str, user: str, since: str, until: str) -> list[str]:
+def _commit_command(repo: str, since: str, until: str) -> list[str]:
     return [
         "api", f"repos/{repo}/commits",
-        "-X", "GET", "-f", f"author={user}",
+        "-X", "GET",
         "-f", f"since={since}", "-f", f"until={until}",
         "--paginate",
     ]
@@ -238,11 +265,14 @@ ACTIVITY_STRATEGIES: Final[dict[ActivityType, dict[str, Any]]] = {
     ActivityType.COMMENTS: {
         "command": lambda repo, user, since, until, fields: _comment_command(repo, since),
         "extractor": fetch_comments,
-        "author_getter": lambda item: _extract_scalar(item.get("author")),
+        "identity_filter": lambda item, variants: _matches_identity(
+            [_extract_scalar(item.get("author"))], variants,
+        ),
     },
     ActivityType.COMMITS: {
-        "command": lambda repo, user, since, until, fields: _commit_command(repo, user, since, until),
+        "command": lambda repo, user, since, until, fields: _commit_command(repo, since, until),
         "extractor": fetch_commits,
+        "identity_filter": _commit_identity_matches,
     },
 }
 
@@ -250,52 +280,61 @@ ACTIVITY_STRATEGIES: Final[dict[ActivityType, dict[str, Any]]] = {
 def _fetch_activity_type(
     activity_type: str,
     repo: str,
-    users: list[str],
+    identity: Record,
     fields: list[str],
     since: str,
     until: str,
 ) -> dict[str, Record]:
     strategy = ACTIVITY_STRATEGIES[activity_type]
-    result: dict[str, Record] = {}
-    for user in users:
-        response = run_gh(strategy["command"](repo, user, since, until, fields))
-        if "author_getter" in strategy:
-            response = [item for item in response if strategy["author_getter"](item) == user]
-        result[user] = {activity_type: strategy["extractor"](response, fields)}
-    return result
+    variants = identity["variants"]
+    if "identity_filter" in strategy:
+        response = run_gh(strategy["command"](repo, None, since, until, fields))
+        response = [item for item in response if strategy["identity_filter"](item, variants)]
+        items = strategy["extractor"](response, fields)
+    else:
+        raw: list[Record] = []
+        for variant in variants:
+            response = run_gh(strategy["command"](repo, variant, since, until, fields))
+            raw = _merge_items(raw, response)
+        items = strategy["extractor"](raw, fields)
+    return {identity["key"]: {activity_type: items}}
 
 
 def fetch_repo_activity(
     repo: str,
-    users: list[str],
+    identities: list[Record],
     activity_types: list[str],
     fields: dict[str, list[str]],
     since: str,
     until: str,
 ) -> dict[str, Record]:
     """Fetch activity from GitHub. This function is impure — it calls `run_gh`."""
-    activity_by_user: dict[str, Record] = {user: {} for user in users}
+    activity_by_identity: dict[str, Record] = {identity["key"]: {} for identity in identities}
     standard_types = [t for t in activity_types if t != ActivityType.EVENTS]
     for activity_type in standard_types:
-        fetched = _fetch_activity_type(activity_type, repo, users, fields[activity_type], since, until)
-        activity_by_user = deep_merge_with(activity_by_user, fetched, _take_right)
+        for identity in identities:
+            fetched = _fetch_activity_type(
+                activity_type, repo, identity, fields[activity_type], since, until,
+            )
+            activity_by_identity = deep_merge_with(activity_by_identity, fetched, _take_right)
 
     if ActivityType.EVENTS in activity_types:
         event_fields = fields["events"]
-        for user in users:
-            pr_numbers, issue_numbers = _discover_issue_numbers(activity_by_user, user)
+        for identity in identities:
+            key = identity["key"]
+            pr_numbers, issue_numbers = _discover_issue_numbers(activity_by_identity, key)
             all_numbers = pr_numbers | issue_numbers
             user_events: list[Record] = []
             for number in all_numbers:
                 raw = run_gh(_event_command(repo, number))
                 user_events.extend(fetch_events(
-                    raw, event_fields, since, until, pr_numbers, user, number,
+                    raw, event_fields, since, until, pr_numbers, identity["variants"], number,
                 ))
-            activity_by_user[user] = deep_merge_with(
-                activity_by_user[user], {"events": user_events}, _take_right,
+            activity_by_identity[key] = deep_merge_with(
+                activity_by_identity[key], {"events": user_events}, _take_right,
             )
 
-    return activity_by_user
+    return activity_by_identity
 
 
 def split_by_day(items: list[Record]) -> dict[str, list[Record]]:
@@ -407,12 +446,14 @@ def main() -> None:
 
     logging.info(f"Starting scrape from {since} to {until}")
 
+    identities = _load_identities(config)
+
     activity_by_repo: dict[str, Record] = {}
     for repo in config["repos"]:
         logging.info(f"Fetching activity for {repo}")
         activity_by_repo[repo] = fetch_repo_activity(
             repo,
-            config["users"],
+            identities,
             config["activity_types"],
             config["fields"],
             since,

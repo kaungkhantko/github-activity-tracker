@@ -546,9 +546,9 @@ class TestFetchEvents(unittest.TestCase):
         since = "2026-06-14T00:00:00Z"
         until = "2026-06-14T23:59:59Z"
         pr_numbers = {42}
-        user = "kaungkhantko"
+        variants = ["kaungkhantko"]
 
-        result = fetch_events(raw_events, fields, since, until, pr_numbers, user, issue_number=42)
+        result = fetch_events(raw_events, fields, since, until, pr_numbers, variants, issue_number=42)
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["id"], "1")
@@ -601,7 +601,7 @@ class TestFetchRepoActivityEvents(unittest.TestCase):
         with patch("src.scrape.run_gh", side_effect=mock_run_gh):
             result = fetch_repo_activity(
                 repo="owner/repo",
-                users=["kaungkhantko"],
+                identities=[{"key": "kaungkhantko", "variants": ["kaungkhantko"]}],
                 activity_types=activity_types,
                 fields=fields,
                 since="2026-06-14T00:00:00Z",
