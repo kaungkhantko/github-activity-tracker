@@ -872,6 +872,10 @@ class TestFetchRepoActivityReviews(unittest.TestCase):
                     "url": "https://github.com/owner/repo/pull/42",
                     "createdAt": "2026-08-05T10:00:00Z", "closedAt": None, "mergedAt": None,
                     "author": {"login": "kaungkhantko"}, "labels": [], "body": ""}]
+        issues_raw = [{"number": 7, "title": "Issue", "state": "open",
+                       "url": "https://github.com/owner/repo/issues/7",
+                       "createdAt": "2026-08-05T09:00:00Z", "closedAt": None,
+                       "author": {"login": "kaungkhantko"}, "labels": [], "body": ""}]
         reviews_raw = [
             {"id": 1, "state": "COMMENTED", "submitted_at": "2026-08-05T19:28:54Z",
              "user": {"login": "kaungkhantko"},
@@ -894,11 +898,13 @@ class TestFetchRepoActivityReviews(unittest.TestCase):
             if args[0] == "pr" and "list" in args:
                 return prs_raw
             if args[0] == "issue" and "list" in args:
-                return []
+                return issues_raw
             if "issues/comments" in str(args):
                 return []
             if "pulls/179/reviews" in str(args):
                 return reviews_raw
+            if "pulls/7/reviews" in str(args):
+                raise RuntimeError("reviews must not be fetched for a plain issue")
             if "pulls/comments" in str(args):
                 return review_comments_raw
             return []

@@ -440,7 +440,7 @@ def fetch_repo_activity(
             if ActivityType.REVIEWS in activity_types:
                 review_fields = fields["reviews"]
                 user_reviews: list[Record] = []
-                for number in all_numbers:
+                for number in pr_numbers:
                     raw = run_gh(_reviews_command(repo, number))
                     user_reviews.extend(fetch_reviews(
                         raw, review_fields, since, until, identity["variants"], number,
